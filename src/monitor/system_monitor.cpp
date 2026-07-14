@@ -47,8 +47,32 @@ CpuStats SystemMonitor::readCpuStats()
 {
     static CpuTimes previous;
     static bool hasPrevious = false;
+    static std::string cachedModelName;
+    static bool modelNameRead = false;
 
     CpuStats stats;
+
+    if(!modelNameRead)
+    {
+        std::ifstream cpuinfo("/proc/cpuinfo");
+        std::string line;
+        while(std::getline(cpuinfo, line))
+        {
+            if(line.rfind("model name", 0) == 0)
+            {
+                auto colonPos = line.find(':');
+                if(colonPos != std::string::npos)
+                {
+                    cachedModelName = line.substr(colonPos + 1);
+                    size_t start = cachedModelName.find_first_not_of(' ');
+                    cachedModelName = (start == std::string::npos) ? "" : cachedModelName.substr(start);
+                }
+                break;
+            }
+        }
+        modelNameRead = true;
+    }
+    stats.modelName = cachedModelName;
 
     const std::string hwmonRoot = "/sys/class/hwmon";
     std::error_code ec;

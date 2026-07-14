@@ -74,7 +74,7 @@ void ConfigParser::printHelp()
     << "--worker <name>\n"
     << "    Rig/worker name (takes priority over the -u wallet.name suffix)\n\n"
     << "--mode <solo|pool>\n"
-    << "    solo (default) : Open Mining Protocol v1, 100%% of the block if found\n"
+    << "    solo (default) : Open Mining Protocol v1, 100% of the block if found\n"
     << "    pool : third-party protocol, smoothed payout (PPLNS)\n\n"
     << "--cpu\n"
     << "    Enable CPU mining\n\n"
@@ -85,5 +85,5 @@ void ConfigParser::printHelp()
     << "--cpu-threads <n>\n"
     << "    Number of CPU threads (default: all logical cores)\n\n"
     << "--intensity <1-5>\n"
-    << "    Fraction of free VRAM used per GPU (1=15%% ... 5=90%%, default 3=50%%)\n\n";
+    << "    Fraction of free VRAM used per GPU (1=15% ... 5=90%, default 3=50%)\n\n";
 }

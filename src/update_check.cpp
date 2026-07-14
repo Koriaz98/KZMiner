@@ -58,7 +58,8 @@ void checkForUpdate()
             std::cout
                 << "\n\033[33m[!] New version available: " << latest
                 << " (current: " << current << ")\n"
-                << "    Download: https://github.com/" << KZMinerInfo::kRepo << "/releases/latest\033[0m\n\n";
+                << "    To check the latest version of KZMiner, go to https://github.com/"
+                << KZMinerInfo::kRepo << "/releases/latest\033[0m\n\n";
         }
     }
     catch(...)

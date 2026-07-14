@@ -28,7 +28,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 14)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -mavx2 -mfma -mpopcnt -flto")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=x86-64-v3 -mavx2 -mfma -mpopcnt -flto")
 
 find_package(CURL REQUIRED)
 
@@ -59,7 +59,7 @@ add_executable(
 target_link_libraries(
     kzminer
 
-    argon2
+    /usr/lib/x86_64-linux-gnu/libargon2.a
     pthread
     CURL::libcurl
     argon2-cuda-vendored
@@ -76,6 +76,6 @@ add_executable(
 target_link_libraries(
     gpu-selftest
 
-    argon2
+    /usr/lib/x86_64-linux-gnu/libargon2.a
     argon2-cuda-vendored
 )
