@@ -4,6 +4,8 @@
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <string>
+#include <sstream>
+#include <vector>
 
 namespace
 {
@@ -13,6 +15,57 @@ namespace
         std::string* str = static_cast<std::string*>(userp);
         str->append(static_cast<char*>(contents), totalSize);
         return totalSize;
+    }
+
+    // Parse "v1.2.3" ou "v1.2.3-4-gabcdef-dirty" -> {1, 2, 3}.
+    // Retourne false si le format n'est pas exploitable (ex: "dev").
+    bool parseVersion(const std::string& raw, std::vector<int>& out)
+    {
+        std::string s = raw;
+        if(!s.empty() && s[0] == 'v')
+        {
+            s = s.substr(1);
+        }
+
+        // Coupe tout ce qui suit le premier '-' (suffixe git describe)
+        auto dashPos = s.find('-');
+        if(dashPos != std::string::npos)
+        {
+            s = s.substr(0, dashPos);
+        }
+
+        out.clear();
+        std::stringstream ss(s);
+        std::string part;
+        while(std::getline(ss, part, '.'))
+        {
+            try
+            {
+                out.push_back(std::stoi(part));
+            }
+            catch(...)
+            {
+                return false;
+            }
+        }
+
+        return !out.empty();
+    }
+
+    // Retourne true si "latest" est strictement plus recent que "current".
+    bool isNewer(const std::vector<int>& latest, const std::vector<int>& current)
+    {
+        size_t n = std::max(latest.size(), current.size());
+        for(size_t i = 0; i < n; i++)
+        {
+            int l = (i < latest.size()) ? latest[i] : 0;
+            int c = (i < current.size()) ? current[i] : 0;
+            if(l != c)
+            {
+                return l > c;
+            }
+        }
+        return false;
     }
 }
 
@@ -50,14 +103,26 @@ void checkForUpdate()
         auto j = nlohmann::json::parse(response);
         if(!j.contains("tag_name")) return;
 
-        std::string latest = j["tag_name"].get<std::string>();
-        std::string current = KZMinerInfo::kVersion;
+        std::string latestStr = j["tag_name"].get<std::string>();
+        std::string currentStr = KZMinerInfo::kVersion;
 
-        if(!latest.empty() && latest != current)
+        std::vector<int> latestParsed, currentParsed;
+        bool latestOk = parseVersion(latestStr, latestParsed);
+        bool currentOk = parseVersion(currentStr, currentParsed);
+
+        // Si l'une des deux versions n'est pas parseable (ex: build "dev"),
+        // on ne peut pas comparer numeriquement -> on ne dit rien plutot
+        // que de risquer un faux avertissement.
+        if(!latestOk || !currentOk)
+        {
+            return;
+        }
+
+        if(isNewer(latestParsed, currentParsed))
         {
             std::cout
-                << "\n\033[33m[!] New version available: " << latest
-                << " (current: " << current << ")\n"
+                << "\n\033[33m[!] New version available: " << latestStr
+                << " (current: " << currentStr << ")\n"
                 << "    To check the latest version of KZMiner, go to https://github.com/"
                 << KZMinerInfo::kRepo << "/releases/latest\033[0m\n\n";
         }

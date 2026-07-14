@@ -1,3 +1,4 @@
+#include <string>
 #include "update_check.h"
 #include "version.h"
 #include <cstdlib>
@@ -17,9 +18,12 @@
 #include "monitor/status_table.h"
 namespace
 {
-    constexpr const char* kCyan  = "\033[36m";
-    constexpr const char* kBlue  = "\033[34m";
-    constexpr const char* kReset = "\033[0m";
+    constexpr const char* kCyan   = "\033[36m";
+    constexpr const char* kBlue   = "\033[34m";
+    constexpr const char* kYellow = "\033[33m";
+    constexpr const char* kRed    = "\033[31m";
+    constexpr const char* kGreen  = "\033[32m";
+    constexpr const char* kReset  = "\033[0m";
     void printLogo()
     {
         std::cout << "\n\n\n";
@@ -80,6 +84,11 @@ int main(int argc, char **argv)
     MinerConfig config = ConfigParser::parse(argc, argv);
 
     printLogo();
+
+    std::cout
+        << kYellow << "To check the latest version of KZMiner, go to https://github.com/"
+        << KZMinerInfo::kRepo << "/releases" << kReset << "\n\n";
+
     checkForUpdate();
 
     for(int i = 3; i > 0; i--)
@@ -89,10 +98,12 @@ int main(int argc, char **argv)
     }
     std::cout << "\r                              \r";
 
-    std::cout << "Algorithm: Argon2id\n";
+    std::cout << "Algorithm: " << kRed << "Argon2id" << kReset << "\n";
     std::cout << "Mode: " << config.mode << "\n";
-    std::cout << "CPU: " << (config.cpuEnabled ? "ON" : "off")
-               << " | GPU: " << (config.gpuEnabled ? "ON" : "off") << "\n\n";
+    std::cout
+        << "CPU: " << (config.cpuEnabled ? (std::string(kGreen) + "ON" + kReset) : (std::string(kRed) + "OFF" + kReset))
+        << " | GPU: " << (config.gpuEnabled ? (std::string(kGreen) + "ON" + kReset) : (std::string(kRed) + "OFF" + kReset))
+        << "\n\n";
 
     if(config.pool.empty())
     {
