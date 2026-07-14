@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+
+# Generated at configure time (see src/version.h.in)
+src/version.h
+
+# Runtime logs
+*.log
+
+# Editor/OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store

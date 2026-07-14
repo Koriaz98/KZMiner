@@ -1,0 +1,8 @@
+#pragma once
+
+namespace KZMinerInfo
+{
+    constexpr const char* kVersion = "@KZMINER_GIT_VERSION@";
+    constexpr const char* kTagline = "CPU/GPU Miner Multi Algorithm";
+    constexpr const char* kRepo    = "Koriaz98/KZMiner";
+}
