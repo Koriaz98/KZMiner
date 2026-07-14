@@ -53,6 +53,17 @@ for full attribution and a list of modifications.
 - libcurl
 - nlohmann-json
 
+## Download
+
+Precompiled Linux x86_64 binaries, checksums, and release notes for
+every version are available on the
+**[Releases page](https://github.com/Koriaz98/KZMiner/releases)**.
+
+> **Note:** precompiled binaries are built on Ubuntu 24.04 (x86_64,
+> AVX2). If a binary fails to start on your system (e.g. `Illegal
+> instruction` or a missing library error), building from source
+> (below) is the recommended, most portable option.
+
 ## Building
 
 ```bash
