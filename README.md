@@ -25,12 +25,26 @@ the rest of the codebase.
 
 KZMiner includes a 1% developer fee, in line with common practice for
 open-source miners (NTMminer, T-Rex, lolMiner, and similar tools). Every
-100 seconds, mining automatically switches to the developer's wallet for
-1 second, then switches back to your wallet. This is fully transparent:
-you can see the switch happen live in the console output
-(`[devfee] switching to dev wallet` / `switching back to user wallet`),
-and the dev fee wallet address is a public constant in
-`src/devfee/devfee_config.h`.
+100 seconds, mining switches to computing for the developer's wallet
+for 1 second, then resumes computing for your wallet. Anything found
+during that 1-second window (shares, blocks) is submitted under the
+developer's wallet and is not refunded or shared back - this is a real
+fee, not a simulated one. This is fully transparent: you can see the
+switch happen live in the console output
+(`[devfee] now mining for the developer wallet` /
+`resumed mining for your wallet`), and the dev fee wallet address is a
+public constant in `src/devfee/devfee_config.h`.
+
+> Important: this fee is in addition to whatever fee the pool you
+> connect to charges. KZMiner's 1% is charged by the miner itself,
+> regardless of which pool you point it at. Pools often charge their
+> own separate fee on top of that (commonly 1-5%, sometimes more) -
+> check your chosen pool's dashboard or documentation for its exact
+> fee before assuming your total cost is just 1%. For example, some
+> third-party BTC09 pools charge a 3% pool fee, which combined with
+> KZMiner's 1% brings the real total to 4%. This is not unique to
+> KZMiner - it applies to any miner used against any pool - but it is
+> easy to overlook, so please check both fees, not just this one.
 
 ## License
 

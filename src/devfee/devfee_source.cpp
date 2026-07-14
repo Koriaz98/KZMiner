@@ -45,8 +45,8 @@ MiningJob DevFeeSource::getJob()
     {
         std::cout
             << (devActive
-                ? "[devfee] switching to dev wallet (1%)\n"
-                : "[devfee] switching back to user wallet\n");
+                ? "[devfee] now mining for the developer wallet (1% fee, non-refundable)\n"
+                : "[devfee] resumed mining for your wallet\n");
     }
 
     return devActive ? devSource_->getJob() : userSource_->getJob();
