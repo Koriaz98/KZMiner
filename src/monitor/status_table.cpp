@@ -14,11 +14,26 @@ namespace
     constexpr const char* kBold   = "\033[1m";
     constexpr const char* kReset  = "\033[0m";
 
+    constexpr double kGpuTempWarnCelsius = 72.0;
+    constexpr double kAtWallOverheadFraction = 0.20;
+
     std::string fmtTemp(double t)
     {
         std::ostringstream o;
         o << std::fixed << std::setprecision(1) << t << "C";
         return o.str();
+    }
+
+    std::string fmtGpuTemp(double t)
+    {
+        std::ostringstream o;
+        o << std::fixed << std::setprecision(1) << t << "C";
+        std::string s = o.str();
+        if(t >= kGpuTempWarnCelsius)
+        {
+            return std::string(kRed) + s + kReset;
+        }
+        return s;
     }
 
     std::string fmtPercent(double p)
@@ -48,19 +63,22 @@ void printStatusTable(const DashboardData& data)
     std::cout << kCyan << kSep << "\n" << kReset;
 
     std::cout
-        << kBold << "HASHRATE" << kReset << " " << kRed << data.totalHashrate << " H/s" << kReset
+        << kBold << "HASHRATE" << kReset << " " << kGreen << data.totalHashrate << " H/s" << kReset
         << "  |  " << kBold << "SHARES" << kReset << " " << kGreen << data.shares << kReset
         << " (" << kGreen << data.accepted << " accepted" << kReset
         << ", " << kRed << data.rejected << " rejected" << kReset << ")"
         << "  |  " << kBold << "DIFFICULTY" << kReset << " " << kYellow << data.difficulty << kReset
-        << "  |  " << kBold << "HEIGHT" << kReset << " " << data.height
+        << "  |  " << kBold << "HEIGHT" << kReset << " " << kYellow << data.height << kReset
         << "\n";
+
+    int activeGpus = static_cast<int>(data.gpuRows.size());
 
     std::cout
         << kBold << "LOAD AVG" << kReset << " "
         << (la.available ? (fmtLoad(la.load1) + " " + fmtLoad(la.load5) + " " + fmtLoad(la.load15)) : std::string("N/A"))
         << "  |  " << kBold << "CPU TEMP" << kReset << " " << (cpu.tempAvailable ? fmtTemp(cpu.tempCelsius) : std::string("N/A"))
         << "  |  " << kBold << "CPU USAGE" << kReset << " " << (cpu.usageAvailable ? fmtPercent(cpu.usagePercent) : std::string("N/A"))
+        << "  |  " << kBold << "ACTIVE" << kReset << " " << (data.cpuThreads > 0 ? 1 : 0) << " CPU + " << activeGpus << " GPU"
         << "\n";
 
     std::cout << kCyan << kSep << "\n" << kReset;
@@ -102,11 +120,21 @@ void printStatusTable(const DashboardData& data)
             std::ostringstream fan;
             if(g.fanPercent >= 0) fan << g.fanPercent << "%"; else fan << "N/A";
 
+            std::string tempStr = fmtGpuTemp(g.tempCelsius);
+            // fmtGpuTemp peut inclure des codes couleur ANSI invisibles ;
+            // on pad le texte "propre" separement pour garder l'alignement.
+            std::string tempPlain = fmtTemp(g.tempCelsius);
+            std::string tempPadded = tempStr;
+            if(tempPlain.size() < 9)
+            {
+                tempPadded += std::string(9 - tempPlain.size(), ' ');
+            }
+
             std::cout
                 << " " << std::left << std::setw(4) << g.index << "| "
                 << kBlue << [&]{ std::string n = g.name.substr(0, 28); n.resize(28, ' '); return n; }() << kReset << " | "
                 << std::left << std::setw(13) << (std::to_string(row.hashrate) + " H/s") << " | "
-                << std::left << std::setw(9) << fmtTemp(g.tempCelsius) << "| "
+                << tempPadded << "| "
                 << std::left << std::setw(7) << (std::to_string(g.utilPercent) + "%") << "| "
                 << std::left << std::setw(20) << vram.str() << "| "
                 << std::left << std::setw(7) << fan.str() << "| "
@@ -117,16 +145,19 @@ void printStatusTable(const DashboardData& data)
         std::cout << kCyan << kSep << "\n" << kReset;
     }
 
-    double totalPower = 0.0;
-    for(const auto &row : data.gpuRows) totalPower += row.stats.powerWatts;
+    double totalGpuPower = 0.0;
+    for(const auto &row : data.gpuRows) totalGpuPower += row.stats.powerWatts;
 
-    int activeGpus = static_cast<int>(data.gpuRows.size());
+    double totalKnownPower = totalGpuPower;
+    if(cpu.powerAvailable) totalKnownPower += cpu.powerWatts;
 
     std::cout
         << kBold << "TOTAL" << kReset
-        << " " << data.totalHashrate << " H/s"
-        << "  |  POWER (GPU) " << static_cast<int>(totalPower) << " W"
-        << "  |  ACTIVE " << (data.cpuThreads > 0 ? 1 : 0) << " CPU + " << activeGpus << " GPU"
+        << " " << kGreen << data.totalHashrate << " H/s" << kReset
+        << "  |  POWER (GPU) " << static_cast<int>(totalGpuPower) << " W"
+        << "  | POWER (CPU) " << (cpu.powerAvailable ? (std::to_string(static_cast<int>(cpu.powerWatts)) + "W") : std::string("N/A"))
+        << "  |  TOTAL AT WALL (CPU + GPU + 20%) " << (u8"\u2248")
+        << static_cast<int>(totalKnownPower * (1.0 + kAtWallOverheadFraction)) << "W"
         << "\n";
 
     std::cout << kCyan << kSep << kReset << "\n";

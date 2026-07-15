@@ -8,6 +8,8 @@ struct CpuStats
     double tempCelsius = 0.0;
     bool usageAvailable = false;
     double usagePercent = 0.0;
+    bool powerAvailable = false;
+    double powerWatts = 0.0;
     std::string modelName;
 };
 

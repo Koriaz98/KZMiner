@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <array>
 #include <filesystem>
+#include <chrono>
 
 namespace fs = std::filesystem;
 
@@ -41,6 +42,56 @@ namespace
 
         return true;
     }
+
+    // Cherche un fichier compteur d'energie exploitable pour calculer
+    // la puissance CPU par delta dans le temps. Priorite a Intel RAPL
+    // (fonctionne aussi sur AMD Zen3/4 recent via le meme mecanisme
+    // noyau, malgre le nom "intel-rapl"), repli sur le pilote AMD
+    // amd_energy si present. Retourne "" si aucune source trouvee.
+    std::string findCpuEnergyPath()
+    {
+        std::error_code ec;
+
+        const std::string powercapRoot = "/sys/class/powercap";
+        if(fs::exists(powercapRoot, ec))
+        {
+            for(const auto &entry : fs::directory_iterator(powercapRoot, ec))
+            {
+                std::string name = readFileTrim(entry.path().string() + "/name");
+                if(name.rfind("package", 0) == 0)
+                {
+                    std::string energyPath = entry.path().string() + "/energy_uj";
+                    if(fs::exists(energyPath, ec))
+                    {
+                        return energyPath;
+                    }
+                }
+            }
+        }
+
+        const std::string hwmonRoot = "/sys/class/hwmon";
+        if(fs::exists(hwmonRoot, ec))
+        {
+            for(const auto &entry : fs::directory_iterator(hwmonRoot, ec))
+            {
+                std::string driverName = readFileTrim(entry.path().string() + "/name");
+                if(driverName == "amd_energy")
+                {
+                    for(int i = 1; i <= 2; i++)
+                    {
+                        std::string energyPath = entry.path().string()
+                            + "/energy" + std::to_string(i) + "_input";
+                        if(fs::exists(energyPath, ec))
+                        {
+                            return energyPath;
+                        }
+                    }
+                }
+            }
+        }
+
+        return "";
+    }
 }
 
 CpuStats SystemMonitor::readCpuStats()
@@ -49,6 +100,12 @@ CpuStats SystemMonitor::readCpuStats()
     static bool hasPrevious = false;
     static std::string cachedModelName;
     static bool modelNameRead = false;
+
+    static std::string cachedEnergyPath;
+    static bool energyPathSearched = false;
+    static unsigned long long previousEnergyUj = 0;
+    static bool hasPreviousEnergy = false;
+    static std::chrono::steady_clock::time_point previousEnergyTime;
 
     CpuStats stats;
 
@@ -128,6 +185,42 @@ CpuStats SystemMonitor::readCpuStats()
 
         previous = current;
         hasPrevious = true;
+    }
+
+    if(!energyPathSearched)
+    {
+        cachedEnergyPath = findCpuEnergyPath();
+        energyPathSearched = true;
+    }
+
+    if(!cachedEnergyPath.empty())
+    {
+        std::string raw = readFileTrim(cachedEnergyPath);
+        if(!raw.empty())
+        {
+            try
+            {
+                unsigned long long currentEnergyUj = std::stoull(raw);
+                auto now = std::chrono::steady_clock::now();
+
+                if(hasPreviousEnergy)
+                {
+                    double elapsedSeconds = std::chrono::duration<double>(now - previousEnergyTime).count();
+
+                    if(elapsedSeconds > 0.05 && currentEnergyUj >= previousEnergyUj)
+                    {
+                        unsigned long long deltaUj = currentEnergyUj - previousEnergyUj;
+                        stats.powerWatts = (double)deltaUj / 1000000.0 / elapsedSeconds;
+                        stats.powerAvailable = true;
+                    }
+                }
+
+                previousEnergyUj = currentEnergyUj;
+                previousEnergyTime = now;
+                hasPreviousEnergy = true;
+            }
+            catch(...) {}
+        }
     }
 
     return stats;
