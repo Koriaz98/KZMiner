@@ -28,5 +28,6 @@ private:
     int deviceCount_ = 0;
 
     void worker(int deviceIndex, int globalId);
+    void supervisedWorker(int deviceIndex, int globalId);
     static double intensityFraction(int intensity);
 };

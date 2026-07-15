@@ -14,6 +14,8 @@ struct DashboardData
 {
     uint64_t totalHashrate = 0;
     uint64_t shares = 0;
+    uint64_t accepted = 0;
+    uint64_t rejected = 0;
     double difficulty = 0.0;
     uint64_t height = 0;
 

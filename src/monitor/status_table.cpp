@@ -50,6 +50,8 @@ void printStatusTable(const DashboardData& data)
     std::cout
         << kBold << "HASHRATE" << kReset << " " << kRed << data.totalHashrate << " H/s" << kReset
         << "  |  " << kBold << "SHARES" << kReset << " " << kGreen << data.shares << kReset
+        << " (" << kGreen << data.accepted << " accepted" << kReset
+        << ", " << kRed << data.rejected << " rejected" << kReset << ")"
         << "  |  " << kBold << "DIFFICULTY" << kReset << " " << kYellow << data.difficulty << kReset
         << "  |  " << kBold << "HEIGHT" << kReset << " " << data.height
         << "\n";

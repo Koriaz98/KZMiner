@@ -122,3 +122,13 @@ void PoolJobManager::submitNonce(
 {
     client_->submit(job_id, nonce, bytesToHex(hash));
 }
+
+uint64_t PoolJobManager::getAcceptedCount() const
+{
+    return client_->getAcceptedCount();
+}
+
+uint64_t PoolJobManager::getRejectedCount() const
+{
+    return client_->getRejectedCount();
+}

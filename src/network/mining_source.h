@@ -33,4 +33,10 @@ public:
         const std::vector<uint8_t>& hash,
         uint64_t height
     ) = 0;
+
+    // Statistiques de soumission confirmees par le serveur (pool ou
+    // coordinateur solo). Par defaut a 0 : seules les sources qui
+    // suivent reellement ces compteurs (mode pool) les redefinissent.
+    virtual uint64_t getAcceptedCount() const { return 0; }
+    virtual uint64_t getRejectedCount() const { return 0; }
 };

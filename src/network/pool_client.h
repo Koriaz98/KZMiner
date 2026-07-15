@@ -25,6 +25,7 @@ public:
         const std::string& wallet,
         const std::string& worker
     );
+    ~PoolClient();
 
     bool connect();
     void run();
@@ -38,7 +39,12 @@ public:
         const std::string& hashHex
     );
 
+    uint64_t getAcceptedCount() const { return acceptedCount_.load(); }
+    uint64_t getRejectedCount() const { return rejectedCount_.load(); }
+
 private:
+    std::atomic<uint64_t> acceptedCount_{0};
+    std::atomic<uint64_t> rejectedCount_{0};
     std::string host_;
     int port_;
     std::string wallet_;

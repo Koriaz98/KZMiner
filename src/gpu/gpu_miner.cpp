@@ -78,6 +78,22 @@ void GpuMiner::worker(int deviceIndex, int globalId)
         size_t freeBytes = 0, totalBytes = 0;
         cudaMemGetInfo(&freeBytes, &totalBytes);
 
+        // Si la VRAM libre semble anormalement basse (moins de la moitie
+        // du total), un ancien process peut etre en train de liberer sa
+        // memoire cote driver sans que ce soit encore visible. On
+        // reessaie quelques fois avant de figer un batch-size trop
+        // petit pour toute la duree de vie du thread.
+        for(int retry = 0; retry < 5 && totalBytes > 0 && freeBytes < totalBytes / 2; retry++)
+        {
+            std::cerr
+                << "GPU " << deviceIndex << ": only "
+                << (freeBytes / (1024*1024)) << " MiB free out of "
+                << (totalBytes / (1024*1024)) << " MiB total, retrying VRAM check in 3s ("
+                << (retry + 1) << "/5)...\n";
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+            cudaMemGetInfo(&freeBytes, &totalBytes);
+        }
+
         size_t usableBytes = (freeBytes > kVramReserveBytes)
             ? (freeBytes - kVramReserveBytes) : 0;
 
@@ -233,6 +249,24 @@ void GpuMiner::launchWorkers()
     for(int d = 0; d < deviceCount; d++)
     {
         int globalId = workerOffset_ + d;
-        std::thread(&GpuMiner::worker, this, d, globalId).detach();
+        std::thread(&GpuMiner::supervisedWorker, this, d, globalId).detach();
+    }
+}
+
+void GpuMiner::supervisedWorker(int deviceIndex, int globalId)
+{
+    // worker() se termine si une exception fatale a ete attrapee en son
+    // sein (voir ses blocs catch). Sans supervision, ce GPU resterait
+    // definitivement hors service pour le reste de l'execution du
+    // process. On le relance automatiquement apres un court delai,
+    // plutot que d'abandonner ce GPU silencieusement.
+    while(true)
+    {
+        worker(deviceIndex, globalId);
+
+        std::cerr
+            << "GPU " << deviceIndex
+            << ": worker thread stopped unexpectedly, restarting in 5s...\n";
+        std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 }

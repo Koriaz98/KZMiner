@@ -23,6 +23,11 @@ public:
         uint64_t height
     ) override;
 
+    // Reflete uniquement les shares du wallet utilisateur (le wallet
+    // dev fee n'a pas vocation a etre suivi par l'utilisateur).
+    uint64_t getAcceptedCount() const override { return userSource_->getAcceptedCount(); }
+    uint64_t getRejectedCount() const override { return userSource_->getRejectedCount(); }
+
 private:
     std::unique_ptr<MiningSource> userSource_;
     std::unique_ptr<MiningSource> devSource_;

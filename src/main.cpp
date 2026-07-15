@@ -257,6 +257,8 @@ int main(int argc, char **argv)
         for(const auto &row : gpuRows) dashboard.totalHashrate += row.hashrate;
 
         dashboard.shares = shares;
+        dashboard.accepted = source->getAcceptedCount();
+        dashboard.rejected = source->getRejectedCount();
         dashboard.difficulty = job.difficulty;
         dashboard.height = job.height;
         dashboard.cpuThreads = cpuMiner ? cpuMiner->getThreadCount() : 0;

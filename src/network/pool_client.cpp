@@ -19,6 +19,15 @@ PoolClient::PoolClient(
 {
 }
 
+PoolClient::~PoolClient()
+{
+    if(sock_ >= 0)
+    {
+        close(sock_);
+        sock_ = -1;
+    }
+}
+
 bool PoolClient::connect()
 {
     struct addrinfo hints{};
@@ -141,7 +150,14 @@ void PoolClient::handleLine(const std::string& line)
        msg["result"].contains("status"))
     {
         std::string status = msg["result"]["status"].get<std::string>();
-        std::cout << "PoolClient: submit result = " << status << "\n";
+        if(status == "accepted")
+        {
+            acceptedCount_++;
+        }
+        else
+        {
+            rejectedCount_++;
+        }
         return;
     }
 

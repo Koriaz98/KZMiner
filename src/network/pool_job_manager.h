@@ -26,6 +26,9 @@ public:
         uint64_t height
     ) override;
 
+    uint64_t getAcceptedCount() const override;
+    uint64_t getRejectedCount() const override;
+
 private:
     std::string host_;
     int port_;
