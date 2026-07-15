@@ -46,6 +46,7 @@ add_executable(
     src/cpu/cpu_miner.cpp
     src/gpu/gpu_miner.cpp
     src/argon2/argon2_engine.cpp
+    src/algo/argon2id/argon2id_algorithm.cpp
     src/network/work_client.cpp
     src/network/solo_job_manager.cpp
     src/network/pool_client.cpp

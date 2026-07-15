@@ -1,0 +1,41 @@
+<svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F5D576"/>
+      <stop offset="50%" stop-color="#C9A227"/>
+      <stop offset="100%" stop-color="#8A6B1E"/>
+    </linearGradient>
+    <path id="ringPath" d="M 138.36,65.45 A 148,148 0 1,1 261.64,334.55 A 148,148 0 1,1 138.36,65.45"/>
+  </defs>
+
+  <rect x="0" y="0" width="400" height="400" fill="#0A0A0A"/>
+
+  <!-- Double ring frame -->
+  <circle cx="200" cy="200" r="178" fill="none" stroke="url(#goldGrad)" stroke-width="5"/>
+  <circle cx="200" cy="200" r="163" fill="none" stroke="url(#goldGrad)" stroke-width="2.5"/>
+
+  <!-- CPU/GPU MINER: rotated slightly left of top. -->
+  <text font-size="10.49" font-weight="700" letter-spacing="1.1"
+        fill="url(#goldGrad)" font-family="'Poppins','Montserrat','Helvetica Neue',Arial,sans-serif">
+    <textPath href="#ringPath" startOffset="1.666%">CPU/GPU MINER</textPath>
+  </text>
+
+  <!-- Rest of the tagline: rotated slightly right relative to CPU/GPU MINER. -->
+  <text font-size="10.49" font-weight="700" letter-spacing="1.1"
+        fill="url(#goldGrad)" font-family="'Poppins','Montserrat','Helvetica Neue',Arial,sans-serif">
+    <textPath href="#ringPath" startOffset="17.55%">MULTI ALGORITHM &#8226; POOL &amp; SOLO MINING &#8226; MULTI GPU SUPPORT &#8226; JUST 1% DEV FEE &#8226; OPEN SOURCE &#8226; HAPPY MINING</textPath>
+  </text>
+
+  <!-- KZ wordmark: exact glyph outlines from Zen Dots (SIL OFL 1.1,
+       Copyright 2021 The Dots Project Authors,
+       https://github.com/googlefonts/zen-dots) -->
+  <g fill="url(#goldGrad)">
+    <path transform="translate(77.91,228.0) scale(0.14025,-0.14025)"
+          d="M70 0V713H230V422H468L703 713H902L608 357L902 0H703L467 292H230V0Z"/>
+    <path transform="translate(205.82,228.0) scale(0.14025,-0.14025)"
+          d="M30 0V121L567 583H53V713H799V592L261 130H797V0Z"/>
+  </g>
+  <text x="200" y="275" text-anchor="middle" font-size="36" font-weight="600"
+        font-family="'Poppins','Montserrat','Helvetica Neue',Arial,sans-serif"
+        letter-spacing="5" fill="url(#goldGrad)">MINER</text>
+</svg>

@@ -20,7 +20,7 @@ public:
     );
 
     std::string name() const override;
-    std::vector<uint8_t> hashCpu(const std::vector<uint8_t>& input, uint64_t nonce) const override;
+    std::vector<uint8_t> hashCpu(const std::vector<uint8_t>& input, uint64_t nonce, uint32_t tCost = 0, uint32_t mCostKib = 0) const override;
     size_t inputSize() const override;
     size_t gpuMemoryPerHashBytes() const override;
 

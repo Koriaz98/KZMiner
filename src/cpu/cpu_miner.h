@@ -3,11 +3,12 @@
 #include <cstdint>
 
 class MiningSource;
+class Algorithm;
 
 class CPUMiner
 {
 public:
-    CPUMiner(MiningSource* source, int threads, int workerOffset, int totalWorkers);
+    CPUMiner(MiningSource* source, Algorithm* algorithm, int threads, int workerOffset, int totalWorkers);
 
     void launchWorkers();
     int getThreadCount() const { return threads; }
@@ -16,6 +17,7 @@ public:
 
 private:
     MiningSource* source_;
+    Algorithm* algorithm_;
     int threads;
     int workerOffset_;
     int totalWorkers_;

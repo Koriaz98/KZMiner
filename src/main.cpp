@@ -16,6 +16,7 @@
 #include "devfee/devfee_source.h"
 #include "devfee/devfee_config.h"
 #include "monitor/status_table.h"
+#include "coins/btc09/btc09_params.h"
 namespace
 {
     constexpr const char* kCyan   = "\033[36m";
@@ -183,10 +184,12 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    auto algorithm = makeBtc09Algorithm();
+
     std::unique_ptr<CPUMiner> cpuMiner;
     if(config.cpuEnabled)
     {
-        cpuMiner = std::make_unique<CPUMiner>(source.get(), cpuThreads, 0, totalWorkers);
+        cpuMiner = std::make_unique<CPUMiner>(source.get(), algorithm.get(), cpuThreads, 0, totalWorkers);
         cpuMiner->launchWorkers();
     }
 

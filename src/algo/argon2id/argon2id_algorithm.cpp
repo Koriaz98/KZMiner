@@ -26,7 +26,9 @@ std::string Argon2idAlgorithm::name() const
 
 std::vector<uint8_t> Argon2idAlgorithm::hashCpu(
     const std::vector<uint8_t>& input,
-    uint64_t nonce
+    uint64_t nonce,
+    uint32_t tCost,
+    uint32_t mCostKib
 ) const
 {
     std::vector<uint8_t> buffer = input;
@@ -36,7 +38,10 @@ std::vector<uint8_t> Argon2idAlgorithm::hashCpu(
         buffer[nonceOffset_ + b] = static_cast<uint8_t>((nonce >> (8 * b)) & 0xff);
     }
 
-    return Argon2Engine::hash(buffer, tCost_, mCostKib_);
+    uint32_t effectiveTCost = (tCost != 0) ? tCost : tCost_;
+    uint32_t effectiveMCostKib = (mCostKib != 0) ? mCostKib : mCostKib_;
+
+    return Argon2Engine::hash(buffer, effectiveTCost, effectiveMCostKib);
 }
 
 size_t Argon2idAlgorithm::inputSize() const

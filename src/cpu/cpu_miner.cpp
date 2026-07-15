@@ -1,5 +1,5 @@
 #include "cpu_miner.h"
-#include "../argon2/argon2_engine.h"
+#include "../algo/algorithm.h"
 #include "../network/mining_source.h"
 #include <iostream>
 #include <thread>
@@ -8,8 +8,8 @@
 #include <cstring>
 #include <pthread.h>
 
-CPUMiner::CPUMiner(MiningSource* source, int threads, int workerOffset, int totalWorkers)
-: source_(source), threads(threads), workerOffset_(workerOffset), totalWorkers_(totalWorkers)
+CPUMiner::CPUMiner(MiningSource* source, Algorithm* algorithm, int threads, int workerOffset, int totalWorkers)
+: source_(source), algorithm_(algorithm), threads(threads), workerOffset_(workerOffset), totalWorkers_(totalWorkers)
 {
 }
 
@@ -65,16 +65,9 @@ void CPUMiner::worker(int cpuId)
             nonce = rangeStart;
         }
 
-        std::vector<uint8_t> attempt = job.header;
-
-        for(int i = 0; i < 8; i++)
-        {
-            attempt[attempt.size() - 8 + i] =
-                static_cast<uint8_t>((nonce >> (8 * i)) & 0xff);
-        }
-
-        std::vector<uint8_t> result = Argon2Engine::hash(
-            attempt,
+        std::vector<uint8_t> result = algorithm_->hashCpu(
+            job.header,
+            nonce,
             job.argon_time,
             job.argon_mem_kib
         );

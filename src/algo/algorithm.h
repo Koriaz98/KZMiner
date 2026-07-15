@@ -21,9 +21,14 @@ public:
     // separement car son emplacement/role varie selon l'algorithme
     // (ex: BTC09 l'integre dans le header, Blocknet l'utilise comme
     // mot de passe Argon2 separe du header/salt).
+    // t_cost/m_cost_kib : parametres Argon2-specifiques, ignores par les
+    // algorithmes qui n'en ont pas la notion (KawPow). Valeur 0 = utiliser
+    // les valeurs par defaut internes de l'implementation concrete.
     virtual std::vector<uint8_t> hashCpu(
         const std::vector<uint8_t>& input,
-        uint64_t nonce
+        uint64_t nonce,
+        uint32_t tCost = 0,
+        uint32_t mCostKib = 0
     ) const = 0;
 
     // Taille en octets du buffer "input" attendu par hashCpu/hashGpu.

@@ -1,5 +1,9 @@
 # KZMiner
 
+<p align="center">
+  <img src="assets/logo.svg" alt="KZMiner logo" width="240"/>
+</p>
+
 Multi-algorithm CPU/GPU miner, with CUDA support for Nvidia GPUs
 (Turing, Ampere, Ada Lovelace, and Blackwell architectures).
 
