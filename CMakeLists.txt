@@ -28,11 +28,29 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 14)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=x86-64-v3 -mavx2 -mfma -mpopcnt -flto")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=x86-64-v2 -mpopcnt -flto")
 
 find_package(CURL REQUIRED)
 
+# Compile libargon2 en deux variantes (portable + AVX2, symboles AVX2
+# renommes) au moment de la configuration, pour que KZMiner puisse
+# choisir automatiquement la bonne variante au demarrage selon le CPU
+# reel de la machine (voir src/argon2/argon2_engine.cpp).
+set(ARGON2_DUAL_DIR ${CMAKE_BINARY_DIR}/argon2-dual)
+file(MAKE_DIRECTORY ${ARGON2_DUAL_DIR})
+
+execute_process(
+    COMMAND ${CMAKE_SOURCE_DIR}/third_party/argon2-build-script/build_argon2_dual.sh
+            ${CMAKE_SOURCE_DIR}/third_party/argon2
+            ${ARGON2_DUAL_DIR}
+    RESULT_VARIABLE ARGON2_DUAL_RESULT
+)
+if(NOT ARGON2_DUAL_RESULT EQUAL 0)
+    message(FATAL_ERROR "Echec de la compilation double de libargon2 (voir ci-dessus)")
+endif()
+
 include_directories(
+    ${ARGON2_DUAL_DIR}
     /usr/include
 )
 
@@ -60,7 +78,8 @@ add_executable(
 target_link_libraries(
     kzminer
 
-    /usr/lib/x86_64-linux-gnu/libargon2.a
+    ${ARGON2_DUAL_DIR}/libargon2_avx2_renamed.a
+    ${ARGON2_DUAL_DIR}/libargon2_ref.a
     pthread
     CURL::libcurl
     argon2-cuda-vendored
@@ -77,6 +96,7 @@ add_executable(
 target_link_libraries(
     gpu-selftest
 
-    /usr/lib/x86_64-linux-gnu/libargon2.a
+    ${ARGON2_DUAL_DIR}/libargon2_avx2_renamed.a
+    ${ARGON2_DUAL_DIR}/libargon2_ref.a
     argon2-cuda-vendored
 )
