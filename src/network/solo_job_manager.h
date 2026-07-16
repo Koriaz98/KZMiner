@@ -8,10 +8,16 @@
 class SoloJobManager : public MiningSource
 {
 public:
+    // pollIntervalSeconds : frequence de sondage du coordinateur en
+    // usage normal (hors 429). L'instance dev fee peut utiliser une
+    // valeur plus longue, puisqu'elle n'est reellement utilisee que
+    // 1% du temps et n'a pas besoin d'un job aussi frais que celui de
+    // l'utilisateur - reduit le volume de requetes cumule.
     SoloJobManager(
         const std::string& poolUrl,
         const std::string& address,
-        const std::string& worker
+        const std::string& worker,
+        int pollIntervalSeconds = 10
     );
     ~SoloJobManager() override;
 
@@ -30,8 +36,11 @@ public:
 private:
     std::atomic<uint64_t> acceptedCount_{0};
     std::atomic<uint64_t> rejectedCount_{0};
+    std::string worker_;
+    int pollIntervalSeconds_;
     WorkClient client_;
     std::mutex mutex_;
+    std::string sourceLabel() const;
     MiningJob current_;
     std::atomic<bool> running_{false};
     std::thread pollThread_;

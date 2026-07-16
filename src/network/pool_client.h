@@ -56,6 +56,7 @@ private:
     int port_;
     std::string wallet_;
     std::string worker_;
+    std::string sourceLabel() const;
 
     int sock_ = -1;
     std::atomic<bool> running_{false};

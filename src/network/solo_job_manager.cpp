@@ -37,9 +37,12 @@ namespace
 SoloJobManager::SoloJobManager(
     const std::string& poolUrl,
     const std::string& address,
-    const std::string& worker
+    const std::string& worker,
+    int pollIntervalSeconds
 )
-: client_(poolUrl, address, worker)
+: worker_(worker)
+, pollIntervalSeconds_(pollIntervalSeconds)
+, client_(poolUrl, address, worker)
 {
 }
 
@@ -52,6 +55,18 @@ SoloJobManager::~SoloJobManager()
     }
 }
 
+std::string SoloJobManager::sourceLabel() const
+{
+    // Le worker du dev fee est toujours suffixe par "-devfee" (voir
+    // DevFeeSource::start()) - permet de distinguer dans les logs si
+    // un message vient de la connexion wallet utilisateur ou dev fee,
+    // les deux tournant en parallele et independamment.
+    static const std::string kSuffix = "-devfee";
+    bool isDevFee = worker_.size() >= kSuffix.size()
+        && worker_.compare(worker_.size() - kSuffix.size(), kSuffix.size(), kSuffix) == 0;
+    return isDevFee ? "[solo:devfee]" : "[solo:user]";
+}
+
 bool SoloJobManager::refreshWork()
 {
     auto work = client_.requestWork();
@@ -61,11 +76,11 @@ bool SoloJobManager::refreshWork()
         std::lock_guard<std::mutex> lock(consoleMutex());
         if(rateLimited)
         {
-            std::cerr << "SoloJobManager: rate limited (HTTP 429), backing off\n";
+            std::cerr << sourceLabel() << " rate limited, retrying in 90s\n";
         }
         else
         {
-            std::cerr << "SoloJobManager: failed to fetch work, will retry\n";
+            std::cerr << sourceLabel() << " couldn't fetch work, retrying\n";
         }
         return rateLimited;
     }
@@ -85,19 +100,10 @@ bool SoloJobManager::refreshWork()
 
     if(isNewJob)
     {
-        std::string headerPrefix;
-        for(int i = 0; i < 8 && i < (int)current_.header.size(); i++)
-        {
-            char buf[3];
-            snprintf(buf, sizeof(buf), "%02x", current_.header[i]);
-            headerPrefix += buf;
-        }
         std::lock_guard<std::mutex> consoleLock(consoleMutex());
         std::cout
-            << "[solo] new work job_id=" << current_.job_id
-            << " height=" << current_.height
-            << " difficulty=" << current_.difficulty
-            << " header_prefix=" << headerPrefix
+            << sourceLabel() << " new job, height " << current_.height
+            << ", difficulty " << current_.difficulty
             << "\n";
     }
 
@@ -114,7 +120,7 @@ void SoloJobManager::pollLoop()
         // beaucoup plus longtemps (90s) avant de reessayer, pour
         // laisser le temps a la limite de debit du coordinateur de se
         // reinitialiser plutot que d'insister au meme rythme.
-        int waitSteps = rateLimited ? 900 : 100;
+        int waitSteps = rateLimited ? 900 : (pollIntervalSeconds_ * 10);
         for(int i = 0; i < waitSteps && running_; i++)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -133,7 +139,7 @@ void SoloJobManager::start()
         int waitSeconds = rateLimited ? 90 : 2;
         {
             std::lock_guard<std::mutex> lock(consoleMutex());
-            std::cerr << "SoloJobManager: retrying initial work fetch in "
+            std::cerr << sourceLabel() << " retrying initial connection in "
                        << waitSeconds << "s...\n";
         }
         std::this_thread::sleep_for(std::chrono::seconds(waitSeconds));
@@ -169,11 +175,11 @@ void SoloJobManager::submitNonce(
     if(result.ok)
     {
         std::cout
-            << "\n*** BLOCK FOUND (solo) *** height=" << height
-            << " block_id=" << result.block_id << "\n\n";
+            << "\n\033[1;32m*** BLOCK FOUND (solo) *** height=" << height
+            << " block_id=" << result.block_id << "\033[0m\n\n";
     }
     else
     {
-        std::cout << "[solo] submit rejected: " << result.error_code << "\n";
+        std::cout << sourceLabel() << " submission rejected: " << result.error_code << "\n";
     }
 }

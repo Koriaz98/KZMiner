@@ -29,6 +29,16 @@ PoolClient::~PoolClient()
     }
 }
 
+std::string PoolClient::sourceLabel() const
+{
+    // Le worker du dev fee est toujours suffixe par "-devfee" (voir
+    // DevFeeSource::start()) - meme convention que le mode solo.
+    static const std::string kSuffix = "-devfee";
+    bool isDevFee = worker_.size() >= kSuffix.size()
+        && worker_.compare(worker_.size() - kSuffix.size(), kSuffix.size(), kSuffix) == 0;
+    return isDevFee ? "[pool:devfee]" : "[pool:user]";
+}
+
 bool PoolClient::connect()
 {
     struct addrinfo hints{};
@@ -42,7 +52,7 @@ bool PoolClient::connect()
     if(getaddrinfo(host_.c_str(), portStr.c_str(), &hints, &res) != 0)
     {
         std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "PoolClient: DNS resolution failed for " << host_ << "\n";
+        std::cerr << sourceLabel() << " DNS lookup failed\n";
         return false;
     }
 
@@ -50,7 +60,7 @@ bool PoolClient::connect()
     if(sock_ < 0)
     {
         std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "PoolClient: socket() failed\n";
+        std::cerr << sourceLabel() << " socket error\n";
         freeaddrinfo(res);
         return false;
     }
@@ -58,7 +68,7 @@ bool PoolClient::connect()
     if(::connect(sock_, res->ai_addr, res->ai_addrlen) != 0)
     {
         std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "PoolClient: connect() failed to " << host_ << ":" << port_ << "\n";
+        std::cerr << sourceLabel() << " connection failed\n";
         freeaddrinfo(res);
         close(sock_);
         sock_ = -1;
@@ -69,7 +79,7 @@ bool PoolClient::connect()
 
     {
         std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cout << "PoolClient: connected to " << host_ << ":" << port_ << "\n";
+        std::cout << sourceLabel() << " connected\n";
     }
 
     json login;
@@ -89,7 +99,7 @@ void PoolClient::sendJson(const std::string& payload)
     if(sent < 0)
     {
         std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "PoolClient: send() failed\n";
+        std::cerr << sourceLabel() << " send failed\n";
     }
 }
 
@@ -105,7 +115,7 @@ void PoolClient::run()
         if(n <= 0)
         {
             std::lock_guard<std::mutex> lock(consoleMutex());
-            std::cerr << "PoolClient: connection closed or error\n";
+            std::cerr << sourceLabel() << " disconnected\n";
             break;
         }
 
@@ -137,7 +147,7 @@ void PoolClient::handleLine(const std::string& line)
     catch(...)
     {
         std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "PoolClient: failed to parse line: " << line << "\n";
+        std::cerr << sourceLabel() << " received malformed message\n";
         return;
     }
 
@@ -151,7 +161,7 @@ void PoolClient::handleLine(const std::string& line)
             {
                 sessionSucceeded_ = true;
                 std::lock_guard<std::mutex> lock(consoleMutex());
-                std::cout << "PoolClient: login accepted by pool\n";
+                std::cout << sourceLabel() << " logged in\n";
             }
         }
         catch(...) {}
@@ -190,9 +200,8 @@ void PoolClient::handleLine(const std::string& line)
 
         std::lock_guard<std::mutex> consoleLock(consoleMutex());
         std::cout
-            << "[pool] job " << currentJob_.job_id
-            << " height=" << currentJob_.height
-            << " difficulty=" << currentJob_.difficulty
+            << sourceLabel() << " new job, height " << currentJob_.height
+            << ", difficulty " << currentJob_.difficulty
             << "\n";
     }
 }

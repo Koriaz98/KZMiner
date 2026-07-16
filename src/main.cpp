@@ -131,7 +131,12 @@ int main(int argc, char **argv)
     {
         std::cout << "Pool: " << config.pool << " (solo, Open Mining Protocol v1)\n";
         userSource = std::make_unique<SoloJobManager>(config.pool, walletAddress, workerName);
-        devSource = std::make_unique<SoloJobManager>(config.pool, DevFeeConfig::kDevWallet, workerName + "-devfee");
+        // Intervalle de sondage bien plus long pour le dev fee (60s au
+        // lieu de 10s) : il n'est reellement utilise que 1% du temps,
+        // pas besoin d'un job aussi frais que celui de l'utilisateur -
+        // reduit significativement le volume de requetes cumule vers
+        // le coordinateur.
+        devSource = std::make_unique<SoloJobManager>(config.pool, DevFeeConfig::kDevWallet, workerName + "-devfee", 60);
     }
     else if(config.mode == "pool")
     {

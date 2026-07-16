@@ -110,10 +110,18 @@ std::optional<MiningWork> WorkClient::requestWork()
     }
     catch(...)
     {
-        std::string preview = response.substr(0, 200);
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: invalid JSON in work response (length="
-                   << response.size() << "): \"" << preview << "\"\n";
+        // Un 429 (limite de debit) est deja identifie et gere
+        // proprement par l'appelant (SoloJobManager) ; pas la peine
+        // de deverser le HTML d'erreur brut a chaque occurrence. On
+        // garde le detail complet uniquement pour les vraies erreurs
+        // inattendues, utiles pour un futur diagnostic.
+        if(lastHttpStatus_ != 429)
+        {
+            std::string preview = response.substr(0, 200);
+            std::lock_guard<std::mutex> lock(consoleMutex());
+            std::cerr << "WorkClient: invalid JSON in work response (length="
+                       << response.size() << "): \"" << preview << "\"\n";
+        }
         return std::nullopt;
     }
 

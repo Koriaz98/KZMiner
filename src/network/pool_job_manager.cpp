@@ -88,8 +88,7 @@ void PoolJobManager::watchdogLoop()
 
         {
             std::lock_guard<std::mutex> lock(consoleMutex());
-            std::cerr << "PoolJobManager (" << host_ << ":" << port_
-                       << "): connection lost, reconnecting in " << delay << "s...\n";
+            std::cerr << "[pool] connection lost, reconnecting in " << delay << "s...\n";
         }
 
         std::this_thread::sleep_for(std::chrono::seconds(delay));
@@ -105,8 +104,7 @@ void PoolJobManager::watchdogLoop()
             if(consecutiveFailures_ < 10) consecutiveFailures_++;
             int nextDelay = reconnectDelaySeconds();
             std::lock_guard<std::mutex> lock(consoleMutex());
-            std::cerr << "PoolJobManager (" << host_ << ":" << port_
-                       << "): reconnection failed, retrying in " << nextDelay << "s\n";
+            std::cerr << "[pool] reconnection failed, retrying in " << nextDelay << "s\n";
             netThread_ = std::thread([](){});
         }
     }
@@ -119,7 +117,7 @@ void PoolJobManager::start()
     {
         if(consecutiveFailures_ < 10) consecutiveFailures_++;
         std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "PoolJobManager: initial connection failed\n";
+        std::cerr << "[pool] initial connection failed\n";
     }
     netThread_ = std::thread(&PoolClient::run, client_.get());
     watchdogThread_ = std::thread(&PoolJobManager::watchdogLoop, this);
