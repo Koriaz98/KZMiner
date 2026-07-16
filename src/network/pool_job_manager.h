@@ -39,6 +39,8 @@ private:
     std::thread netThread_;
     std::thread watchdogThread_;
     std::atomic<bool> running_{false};
+    int consecutiveFailures_ = 0;
 
     void watchdogLoop();
+    int reconnectDelaySeconds() const;
 };

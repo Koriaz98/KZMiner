@@ -42,9 +42,16 @@ public:
     uint64_t getAcceptedCount() const { return acceptedCount_.load(); }
     uint64_t getRejectedCount() const { return rejectedCount_.load(); }
 
+    // true si le pool a confirme le login OU envoye au moins un job
+    // durant cette session precise (pas juste une poignee de main TCP
+    // reussie, qui ne garantit pas que le pool accepte reellement la
+    // connexion sur la duree).
+    bool hadSuccessfulSession() const { return sessionSucceeded_.load(); }
+
 private:
     std::atomic<uint64_t> acceptedCount_{0};
     std::atomic<uint64_t> rejectedCount_{0};
+    std::atomic<bool> sessionSucceeded_{false};
     std::string host_;
     int port_;
     std::string wallet_;

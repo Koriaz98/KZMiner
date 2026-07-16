@@ -149,6 +149,7 @@ void PoolClient::handleLine(const std::string& line)
             std::string status = msg["result"]["status"].get<std::string>();
             if(status == "ok")
             {
+                sessionSucceeded_ = true;
                 std::lock_guard<std::mutex> lock(consoleMutex());
                 std::cout << "PoolClient: login accepted by pool\n";
             }
@@ -174,6 +175,7 @@ void PoolClient::handleLine(const std::string& line)
 
     if(msg.contains("method") && msg["method"] == "job" && msg.contains("params"))
     {
+        sessionSucceeded_ = true;
         auto& p = msg["params"];
 
         std::lock_guard<std::mutex> lock(jobMutex_);

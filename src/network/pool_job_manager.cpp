@@ -4,6 +4,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <algorithm>
 
 namespace
 {
@@ -51,6 +52,13 @@ PoolJobManager::~PoolJobManager()
     if(watchdogThread_.joinable()) watchdogThread_.join();
 }
 
+int PoolJobManager::reconnectDelaySeconds() const
+{
+    // Delai fixe : une tentative de reconnexion toutes les 60s en cas
+    // de deconnexion, jamais plus rapproche.
+    return 60;
+}
+
 void PoolJobManager::watchdogLoop()
 {
     while(running_)
@@ -61,13 +69,30 @@ void PoolJobManager::watchdogLoop()
         }
         if(!running_) break;
 
+        // Evalue le VRAI resultat de la session qui vient de se
+        // terminer (login confirme ou job recu), pas juste si la
+        // poignee de main TCP initiale avait reussi - certains pools
+        // acceptent le TCP puis coupent la session peu apres, ce qui
+        // ferait sinon repartir le compteur d'echecs a zero a chaque
+        // cycle sans jamais laisser le delai progresser.
+        if(client_->hadSuccessfulSession())
+        {
+            consecutiveFailures_ = 0;
+        }
+        else
+        {
+            if(consecutiveFailures_ < 10) consecutiveFailures_++;
+        }
+
+        int delay = reconnectDelaySeconds();
+
         {
             std::lock_guard<std::mutex> lock(consoleMutex());
             std::cerr << "PoolJobManager (" << host_ << ":" << port_
-                       << "): connection lost, reconnecting in 5s...\n";
+                       << "): connection lost, reconnecting in " << delay << "s...\n";
         }
 
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        std::this_thread::sleep_for(std::chrono::seconds(delay));
         if(!running_) break;
 
         client_ = std::make_unique<PoolClient>(host_, port_, wallet_, worker_);
@@ -77,9 +102,11 @@ void PoolJobManager::watchdogLoop()
         }
         else
         {
+            if(consecutiveFailures_ < 10) consecutiveFailures_++;
+            int nextDelay = reconnectDelaySeconds();
             std::lock_guard<std::mutex> lock(consoleMutex());
             std::cerr << "PoolJobManager (" << host_ << ":" << port_
-                       << "): reconnection failed, retrying in 5s\n";
+                       << "): reconnection failed, retrying in " << nextDelay << "s\n";
             netThread_ = std::thread([](){});
         }
     }
@@ -90,6 +117,7 @@ void PoolJobManager::start()
     running_ = true;
     if(!client_->connect())
     {
+        if(consecutiveFailures_ < 10) consecutiveFailures_++;
         std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "PoolJobManager: initial connection failed\n";
     }
