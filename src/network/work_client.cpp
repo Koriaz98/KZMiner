@@ -1,4 +1,5 @@
 #include "work_client.h"
+#include "../console_lock.h"
 #include <nlohmann/json.hpp>
 #include <curl/curl.h>
 #include <iostream>
@@ -48,6 +49,7 @@ std::string WorkClient::httpPost(
     CURL* curl = curl_easy_init();
     if(!curl)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: curl_easy_init failed\n";
         return "";
     }
@@ -71,6 +73,7 @@ std::string WorkClient::httpPost(
 
     if(res != CURLE_OK)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: HTTP request failed: " << curl_easy_strerror(res) << "\n";
         response.clear();
     }
@@ -103,24 +106,28 @@ std::optional<MiningWork> WorkClient::requestWork()
     }
     catch(...)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: invalid JSON in work response\n";
         return std::nullopt;
     }
 
     if(j.contains("error_code"))
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: work error: " << j["error_code"].get<std::string>() << "\n";
         return std::nullopt;
     }
 
     if(!j.contains("schema_version") || j["schema_version"].get<int>() != 1)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: unexpected schema_version\n";
         return std::nullopt;
     }
 
     if(!j.contains("network") || j["network"].get<std::string>() != "btc09-mainnet")
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: unexpected network field\n";
         return std::nullopt;
     }
@@ -137,18 +144,21 @@ std::optional<MiningWork> WorkClient::requestWork()
 
     if(work.job_id.size() != 32)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: job_id has unexpected length\n";
         return std::nullopt;
     }
 
     if(headerHex.size() != 176)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: header_hex has unexpected length\n";
         return std::nullopt;
     }
 
     if(targetHex.size() != 64)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: target_hex has unexpected length\n";
         return std::nullopt;
     }
@@ -169,6 +179,7 @@ std::optional<MiningWork> WorkClient::requestWork()
 
     if(!nonceIsZero)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "WorkClient: header nonce is not zero, rejecting work\n";
         return std::nullopt;
     }

@@ -16,6 +16,7 @@
 #include "devfee/devfee_source.h"
 #include "devfee/devfee_config.h"
 #include "monitor/status_table.h"
+#include "console_lock.h"
 #include "coins/btc09/btc09_params.h"
 namespace
 {
@@ -202,53 +203,81 @@ int main(int argc, char **argv)
 
     std::vector<uint64_t> previousGpuHashes(gpuDeviceCount, 0);
     uint64_t previousCpuHashes = 0;
+    uint64_t previousAccepted = 0;
 
-    auto lastTime = std::chrono::steady_clock::now();
+    auto lastRateTime = std::chrono::steady_clock::now();
     bool firstIteration = true;
+
+    // dernieres valeurs connues, reaffichees telles quelles entre deux
+    // recalculs de hashrate (toutes les 10s), pour rafraichir le
+    // panneau plus souvent (toutes les 2s) sans rendre le chiffre de
+    // hashrate instable/bruite sur une trop courte fenetre.
+    DashboardData lastDashboard;
 
     while(true)
     {
-        std::this_thread::sleep_for(
-            firstIteration ? std::chrono::seconds(2) : std::chrono::seconds(10)
-        );
+        std::this_thread::sleep_for(std::chrono::seconds(2));
 
         auto now = std::chrono::steady_clock::now();
-        double elapsed = std::chrono::duration<double>(now - lastTime).count();
-        lastTime = now;
-        firstIteration = false;
-        if(elapsed < 0.1) elapsed = 0.1;
+        double sinceLastRate = std::chrono::duration<double>(now - lastRateTime).count();
+
+        bool recomputeRate = firstIteration || sinceLastRate >= 10.0;
 
         uint64_t shares = 0;
+        uint64_t cpuRate = lastDashboard.cpuHashrate;
+        std::vector<GpuRow> gpuRows = lastDashboard.gpuRows;
 
-        uint64_t currCpu = 0;
-        if(cpuMiner)
+        if(recomputeRate)
         {
-            currCpu = cpuMiner->getHashes();
-            shares += cpuMiner->getShares();
-        }
-        uint64_t cpuRate = static_cast<uint64_t>((currCpu - previousCpuHashes) / elapsed);
-        previousCpuHashes = currCpu;
+            double elapsed = sinceLastRate;
+            if(elapsed < 0.1) elapsed = 0.1;
 
-        std::vector<GpuRow> gpuRows;
-        if(gpuMiner)
-        {
-            shares += gpuMiner->getShares();
-
-            std::vector<GpuStats> stats = SystemMonitor::readGpuStats();
-            for(const auto &s : stats)
+            uint64_t currCpu = 0;
+            if(cpuMiner)
             {
-                uint64_t curr = gpuMiner->getDeviceHashes(s.index);
-                uint64_t prev = (s.index < static_cast<int>(previousGpuHashes.size()))
-                    ? previousGpuHashes[s.index] : 0;
+                currCpu = cpuMiner->getHashes();
+                shares += cpuMiner->getShares();
+            }
+            cpuRate = static_cast<uint64_t>((currCpu - previousCpuHashes) / elapsed);
+            previousCpuHashes = currCpu;
 
-                GpuRow row;
-                row.stats = s;
-                row.hashrate = static_cast<uint64_t>((curr - prev) / elapsed);
-                gpuRows.push_back(row);
-
-                if(s.index < static_cast<int>(previousGpuHashes.size()))
+            gpuRows.clear();
+            if(gpuMiner)
+            {
+                shares += gpuMiner->getShares();
+                std::vector<GpuStats> stats = SystemMonitor::readGpuStats();
+                for(const auto &s : stats)
                 {
-                    previousGpuHashes[s.index] = curr;
+                    uint64_t curr = gpuMiner->getDeviceHashes(s.index);
+                    uint64_t prev = (s.index < static_cast<int>(previousGpuHashes.size()))
+                        ? previousGpuHashes[s.index] : 0;
+                    GpuRow row;
+                    row.stats = s;
+                    row.hashrate = static_cast<uint64_t>((curr - prev) / elapsed);
+                    gpuRows.push_back(row);
+                    if(s.index < static_cast<int>(previousGpuHashes.size()))
+                    {
+                        previousGpuHashes[s.index] = curr;
+                    }
+                }
+            }
+
+            lastRateTime = now;
+            firstIteration = false;
+        }
+        else
+        {
+            // Entre deux recalculs : on garde le hashrate/GPU-hashrate
+            // stables, mais on relit quand meme les stats instantanees
+            // (temp/util/VRAM/fan/power) pour que le panneau "respire".
+            if(cpuMiner) shares += cpuMiner->getShares();
+            if(gpuMiner)
+            {
+                shares += gpuMiner->getShares();
+                std::vector<GpuStats> stats = SystemMonitor::readGpuStats();
+                for(size_t i = 0; i < gpuRows.size() && i < stats.size(); i++)
+                {
+                    gpuRows[i].stats = stats[i];
                 }
             }
         }
@@ -258,7 +287,6 @@ int main(int argc, char **argv)
         DashboardData dashboard;
         dashboard.totalHashrate = cpuRate;
         for(const auto &row : gpuRows) dashboard.totalHashrate += row.hashrate;
-
         dashboard.shares = shares;
         dashboard.accepted = source->getAcceptedCount();
         dashboard.rejected = source->getRejectedCount();
@@ -268,7 +296,18 @@ int main(int argc, char **argv)
         dashboard.cpuHashrate = cpuRate;
         dashboard.gpuRows = gpuRows;
 
+        if(dashboard.accepted > previousAccepted)
+        {
+            uint64_t newlyAccepted = dashboard.accepted - previousAccepted;
+            std::lock_guard<std::mutex> lock(consoleMutex());
+            std::cout
+                << "\033[32m[shares] +" << newlyAccepted
+                << " accepted (" << dashboard.accepted << " total)\033[0m\n";
+        }
+        previousAccepted = dashboard.accepted;
+
         printStatusTable(dashboard);
+        lastDashboard = dashboard;
     }
 
     return 0;

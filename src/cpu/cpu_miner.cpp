@@ -1,5 +1,6 @@
 #include "cpu_miner.h"
 #include "../algo/algorithm.h"
+#include "../console_lock.h"
 #include "../network/mining_source.h"
 #include <iostream>
 #include <thread>
@@ -23,6 +24,7 @@ void CPUMiner::worker(int cpuId)
     int rc = pthread_setaffinity_np(current, sizeof(cpu_set_t), &cpuset);
     if(rc != 0)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "Warning: failed to set affinity for thread on core " << cpuId << "\n";
     }
 
@@ -91,10 +93,13 @@ void CPUMiner::worker(int cpuId)
 
 void CPUMiner::launchWorkers()
 {
-    std::cout
-        << "CPU: " << threads << " thread(s), affinity enabled, "
-        << "global worker id " << workerOffset_ << ".." << (workerOffset_ + threads - 1)
-        << " / " << totalWorkers_ << "\n";
+    {
+        std::lock_guard<std::mutex> lock(consoleMutex());
+        std::cout
+            << "CPU: " << threads << " thread(s), affinity enabled, "
+            << "global worker id " << workerOffset_ << ".." << (workerOffset_ + threads - 1)
+            << " / " << totalWorkers_ << "\n";
+    }
 
     for(int i = 0; i < threads; i++)
     {

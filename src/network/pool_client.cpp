@@ -1,4 +1,5 @@
 #include "pool_client.h"
+#include "../console_lock.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <cstring>
@@ -40,6 +41,7 @@ bool PoolClient::connect()
 
     if(getaddrinfo(host_.c_str(), portStr.c_str(), &hints, &res) != 0)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "PoolClient: DNS resolution failed for " << host_ << "\n";
         return false;
     }
@@ -47,6 +49,7 @@ bool PoolClient::connect()
     sock_ = socket(AF_INET, SOCK_STREAM, 0);
     if(sock_ < 0)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "PoolClient: socket() failed\n";
         freeaddrinfo(res);
         return false;
@@ -54,6 +57,7 @@ bool PoolClient::connect()
 
     if(::connect(sock_, res->ai_addr, res->ai_addrlen) != 0)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "PoolClient: connect() failed to " << host_ << ":" << port_ << "\n";
         freeaddrinfo(res);
         close(sock_);
@@ -63,7 +67,10 @@ bool PoolClient::connect()
 
     freeaddrinfo(res);
 
-    std::cout << "PoolClient: connected to " << host_ << ":" << port_ << "\n";
+    {
+        std::lock_guard<std::mutex> lock(consoleMutex());
+        std::cout << "PoolClient: connected to " << host_ << ":" << port_ << "\n";
+    }
 
     json login;
     login["id"] = 1;
@@ -81,6 +88,7 @@ void PoolClient::sendJson(const std::string& payload)
     ssize_t sent = send(sock_, line.c_str(), line.size(), MSG_NOSIGNAL);
     if(sent < 0)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "PoolClient: send() failed\n";
     }
 }
@@ -96,6 +104,7 @@ void PoolClient::run()
         ssize_t n = recv(sock_, chunk, sizeof(chunk) - 1, 0);
         if(n <= 0)
         {
+            std::lock_guard<std::mutex> lock(consoleMutex());
             std::cerr << "PoolClient: connection closed or error\n";
             break;
         }
@@ -127,6 +136,7 @@ void PoolClient::handleLine(const std::string& line)
     }
     catch(...)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "PoolClient: failed to parse line: " << line << "\n";
         return;
     }
@@ -139,6 +149,7 @@ void PoolClient::handleLine(const std::string& line)
             std::string status = msg["result"]["status"].get<std::string>();
             if(status == "ok")
             {
+                std::lock_guard<std::mutex> lock(consoleMutex());
                 std::cout << "PoolClient: login accepted by pool\n";
             }
         }
@@ -175,6 +186,7 @@ void PoolClient::handleLine(const std::string& line)
         currentJob_.nonce_end   = p.value("nonce_end", 0ULL);
         currentJob_.valid       = true;
 
+        std::lock_guard<std::mutex> consoleLock(consoleMutex());
         std::cout
             << "[pool] job " << currentJob_.job_id
             << " height=" << currentJob_.height

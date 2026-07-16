@@ -1,4 +1,5 @@
 #include "solo_job_manager.h"
+#include "../console_lock.h"
 #include <iostream>
 #include <chrono>
 #include <cstdio>
@@ -56,14 +57,13 @@ void SoloJobManager::refreshWork()
     auto work = client_.requestWork();
     if(!work.has_value())
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "SoloJobManager: failed to fetch work, will retry\n";
         return;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-
     bool isNewJob = (work->job_id != current_.job_id);
-
     current_.valid         = true;
     current_.job_id         = work->job_id;
     current_.height         = work->height;
@@ -84,7 +84,7 @@ void SoloJobManager::refreshWork()
             snprintf(buf, sizeof(buf), "%02x", current_.header[i]);
             headerPrefix += buf;
         }
-
+        std::lock_guard<std::mutex> consoleLock(consoleMutex());
         std::cout
             << "[solo] new work job_id=" << current_.job_id
             << " height=" << current_.height
@@ -109,15 +109,16 @@ void SoloJobManager::pollLoop()
 void SoloJobManager::start()
 {
     running_ = true;
-
     for(int attempt = 0; attempt < 5; attempt++)
     {
         refreshWork();
         if(current_.valid) break;
-        std::cerr << "SoloJobManager: retrying initial work fetch...\n";
+        {
+            std::lock_guard<std::mutex> lock(consoleMutex());
+            std::cerr << "SoloJobManager: retrying initial work fetch...\n";
+        }
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
-
     pollThread_ = std::thread(&SoloJobManager::pollLoop, this);
 }
 
@@ -136,6 +137,7 @@ void SoloJobManager::submitNonce(
 {
     auto result = client_.submitNonce(job_id, nonce);
 
+    std::lock_guard<std::mutex> lock(consoleMutex());
     if(result.ok)
     {
         std::cout

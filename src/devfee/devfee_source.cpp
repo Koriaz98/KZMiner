@@ -1,6 +1,7 @@
 #include "devfee_source.h"
 #include <iostream>
 #include <cmath>
+#include "../console_lock.h"
 
 DevFeeSource::DevFeeSource(
     std::unique_ptr<MiningSource> userSource,
@@ -21,10 +22,13 @@ void DevFeeSource::start()
     userSource_->start();
     devSource_->start();
 
-    std::cout
-        << "Dev fee: " << feePercent_ << "% ("
-        << (cycleSeconds_ * feePercent_ / 100.0)
-        << "s every " << cycleSeconds_ << "s)\n";
+    {
+        std::lock_guard<std::mutex> lock(consoleMutex());
+        std::cout
+            << "Dev fee: " << feePercent_ << "% ("
+            << (cycleSeconds_ * feePercent_ / 100.0)
+            << "s every " << cycleSeconds_ << "s)\n";
+    }
 }
 
 bool DevFeeSource::isDevActive()
@@ -43,6 +47,7 @@ MiningJob DevFeeSource::getJob()
     bool wasDev = lastActiveWasDev_.exchange(devActive);
     if(devActive != wasDev)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cout
             << (devActive
                 ? "[devfee] now mining for the developer wallet (1% fee, non-refundable)\n"

@@ -1,4 +1,5 @@
 #include "pool_job_manager.h"
+#include "../console_lock.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -58,23 +59,25 @@ void PoolJobManager::watchdogLoop()
         {
             netThread_.join();
         }
-
         if(!running_) break;
 
-        std::cerr << "PoolJobManager (" << host_ << ":" << port_
-                   << "): connection lost, reconnecting in 5s...\n";
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        {
+            std::lock_guard<std::mutex> lock(consoleMutex());
+            std::cerr << "PoolJobManager (" << host_ << ":" << port_
+                       << "): connection lost, reconnecting in 5s...\n";
+        }
 
+        std::this_thread::sleep_for(std::chrono::seconds(5));
         if(!running_) break;
 
         client_ = std::make_unique<PoolClient>(host_, port_, wallet_, worker_);
-
         if(client_->connect())
         {
             netThread_ = std::thread(&PoolClient::run, client_.get());
         }
         else
         {
+            std::lock_guard<std::mutex> lock(consoleMutex());
             std::cerr << "PoolJobManager (" << host_ << ":" << port_
                        << "): reconnection failed, retrying in 5s\n";
             netThread_ = std::thread([](){});
@@ -85,9 +88,9 @@ void PoolJobManager::watchdogLoop()
 void PoolJobManager::start()
 {
     running_ = true;
-
     if(!client_->connect())
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "PoolJobManager: initial connection failed\n";
     }
     netThread_ = std::thread(&PoolClient::run, client_.get());
@@ -97,7 +100,6 @@ void PoolJobManager::start()
 MiningJob PoolJobManager::getJob()
 {
     PoolJob pj = client_->getJob();
-
     MiningJob job;
     job.valid         = pj.valid;
     job.job_id         = pj.job_id;
@@ -109,7 +111,6 @@ MiningJob PoolJobManager::getJob()
     job.nonce_end      = pj.nonce_end;
     job.argon_mem_kib  = 65536;
     job.argon_time     = 1;
-
     return job;
 }
 

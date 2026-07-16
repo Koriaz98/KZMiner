@@ -1,5 +1,6 @@
 #include "gpu_miner.h"
 #include "../network/mining_source.h"
+#include "../console_lock.h"
 
 #include "argon2-gpu-common/argon2params.h"
 #include "argon2-cuda/globalcontext.h"
@@ -58,10 +59,15 @@ void GpuMiner::worker(int deviceIndex, int globalId)
 {
     try
     {
-        std::cout << "GPU " << deviceIndex << ": initializing..." << std::endl;
+        {
+            std::lock_guard<std::mutex> lock(consoleMutex());
+            std::cout << "GPU " << deviceIndex << ": initializing..." << std::endl;
+        }
+
         cudaError_t setDevErr = cudaSetDevice(deviceIndex);
         if(setDevErr != cudaSuccess)
         {
+            std::lock_guard<std::mutex> lock(consoleMutex());
             std::cerr << "GPU " << deviceIndex << ": cudaSetDevice failed ("
                        << cudaGetErrorString(setDevErr) << ")\n";
             return;
@@ -85,11 +91,14 @@ void GpuMiner::worker(int deviceIndex, int globalId)
         // petit pour toute la duree de vie du thread.
         for(int retry = 0; retry < 5 && totalBytes > 0 && freeBytes < totalBytes / 2; retry++)
         {
-            std::cerr
-                << "GPU " << deviceIndex << ": only "
-                << (freeBytes / (1024*1024)) << " MiB free out of "
-                << (totalBytes / (1024*1024)) << " MiB total, retrying VRAM check in 3s ("
-                << (retry + 1) << "/5)...\n";
+            {
+                std::lock_guard<std::mutex> lock(consoleMutex());
+                std::cerr
+                    << "GPU " << deviceIndex << ": only "
+                    << (freeBytes / (1024*1024)) << " MiB free out of "
+                    << (totalBytes / (1024*1024)) << " MiB total, retrying VRAM check in 3s ("
+                    << (retry + 1) << "/5)...\n";
+            }
             std::this_thread::sleep_for(std::chrono::seconds(3));
             cudaMemGetInfo(&freeBytes, &totalBytes);
         }
@@ -103,18 +112,22 @@ void GpuMiner::worker(int deviceIndex, int globalId)
         );
         if(batchSize < 1) batchSize = 1;
 
-        std::cout
-            << "GPU " << deviceIndex
-            << ": " << (totalBytes / (1024*1024)) << " MiB total, "
-            << (freeBytes / (1024*1024)) << " MiB free, "
-            << "batch-size=" << batchSize
-            << " (intensity " << intensity_ << "), "
-            << "global worker id " << globalId << " / " << totalWorkers_ << "\n";
+        {
+            std::lock_guard<std::mutex> lock(consoleMutex());
+            std::cout
+                << "GPU " << deviceIndex
+                << ": " << (totalBytes / (1024*1024)) << " MiB total, "
+                << (freeBytes / (1024*1024)) << " MiB free, "
+                << "batch-size=" << batchSize
+                << " (intensity " << intensity_ << "), "
+                << "global worker id " << globalId << " / " << totalWorkers_ << "\n";
+        }
 
         argon2::cuda::GlobalContext global;
         auto &devices = global.getAllDevices();
         if(deviceIndex >= static_cast<int>(devices.size()))
         {
+            std::lock_guard<std::mutex> lock(consoleMutex());
             std::cerr << "GPU " << deviceIndex << ": index out of range\n";
             return;
         }
@@ -215,14 +228,17 @@ void GpuMiner::worker(int deviceIndex, int globalId)
     }
     catch(const argon2::cuda::CudaException &ex)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "GPU " << deviceIndex << ": fatal CUDA error: " << ex.what() << "\n";
     }
     catch(const std::exception &ex)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "GPU " << deviceIndex << ": non-CUDA exception: " << ex.what() << "\n";
     }
     catch(...)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "GPU " << deviceIndex << ": unknown exception, thread stopped\n";
     }
 }
@@ -233,6 +249,7 @@ void GpuMiner::launchWorkers()
 
     if(deviceCount == 0)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cerr << "No CUDA GPU detected.\n";
         return;
     }
@@ -244,7 +261,10 @@ void GpuMiner::launchWorkers()
         perDeviceHashes_[i] = 0;
     }
 
-    std::cout << "GPUs detected: " << deviceCount << "\n";
+    {
+        std::lock_guard<std::mutex> lock(consoleMutex());
+        std::cout << "GPUs detected: " << deviceCount << "\n";
+    }
 
     for(int d = 0; d < deviceCount; d++)
     {
@@ -264,9 +284,12 @@ void GpuMiner::supervisedWorker(int deviceIndex, int globalId)
     {
         worker(deviceIndex, globalId);
 
-        std::cerr
-            << "GPU " << deviceIndex
-            << ": worker thread stopped unexpectedly, restarting in 5s...\n";
+        {
+            std::lock_guard<std::mutex> lock(consoleMutex());
+            std::cerr
+                << "GPU " << deviceIndex
+                << ": worker thread stopped unexpectedly, restarting in 5s...\n";
+        }
         std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 }
