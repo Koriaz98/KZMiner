@@ -127,13 +127,16 @@ void SoloJobManager::start()
     running_ = true;
     for(int attempt = 0; attempt < 5; attempt++)
     {
-        refreshWork();
+        bool rateLimited = refreshWork();
         if(current_.valid) break;
+
+        int waitSeconds = rateLimited ? 90 : 2;
         {
             std::lock_guard<std::mutex> lock(consoleMutex());
-            std::cerr << "SoloJobManager: retrying initial work fetch...\n";
+            std::cerr << "SoloJobManager: retrying initial work fetch in "
+                       << waitSeconds << "s...\n";
         }
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+        std::this_thread::sleep_for(std::chrono::seconds(waitSeconds));
     }
     pollThread_ = std::thread(&SoloJobManager::pollLoop, this);
 }
