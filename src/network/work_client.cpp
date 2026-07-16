@@ -71,6 +71,10 @@ std::string WorkClient::httpPost(
 
     CURLcode res = curl_easy_perform(curl);
 
+    long httpStatus = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+    lastHttpStatus_ = httpStatus;
+
     if(res != CURLE_OK)
     {
         std::lock_guard<std::mutex> lock(consoleMutex());
@@ -106,8 +110,10 @@ std::optional<MiningWork> WorkClient::requestWork()
     }
     catch(...)
     {
+        std::string preview = response.substr(0, 200);
         std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: invalid JSON in work response\n";
+        std::cerr << "WorkClient: invalid JSON in work response (length="
+                   << response.size() << "): \"" << preview << "\"\n";
         return std::nullopt;
     }
 

@@ -40,10 +40,17 @@ public:
         uint64_t nonce
     );
 
+    // Code HTTP de la derniere requete (0 si jamais interrogee, ou en
+    // cas d'echec avant meme d'obtenir une reponse). Permet a
+    // SoloJobManager de detecter un 429 (Too Many Requests) et
+    // d'appliquer un delai plus long avant de reessayer.
+    long getLastHttpStatus() const { return lastHttpStatus_; }
+
 private:
     std::string poolUrl_;
     std::string address_;
     std::string worker_;
+    long lastHttpStatus_ = 0;
 
     std::string httpPost(
         const std::string& path,

@@ -37,5 +37,8 @@ private:
     std::thread pollThread_;
 
     void pollLoop();
-    void refreshWork();
+    // Retourne true si un code HTTP 429 (Too Many Requests) a ete
+    // recu, pour que pollLoop() applique un delai bien plus long
+    // avant de reessayer plutot que le cycle normal de 10s.
+    bool refreshWork();
 };

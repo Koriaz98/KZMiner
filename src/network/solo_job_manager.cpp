@@ -52,14 +52,22 @@ SoloJobManager::~SoloJobManager()
     }
 }
 
-void SoloJobManager::refreshWork()
+bool SoloJobManager::refreshWork()
 {
     auto work = client_.requestWork();
     if(!work.has_value())
     {
+        bool rateLimited = (client_.getLastHttpStatus() == 429);
         std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "SoloJobManager: failed to fetch work, will retry\n";
-        return;
+        if(rateLimited)
+        {
+            std::cerr << "SoloJobManager: rate limited (HTTP 429), backing off\n";
+        }
+        else
+        {
+            std::cerr << "SoloJobManager: failed to fetch work, will retry\n";
+        }
+        return rateLimited;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -92,14 +100,22 @@ void SoloJobManager::refreshWork()
             << " header_prefix=" << headerPrefix
             << "\n";
     }
+
+    return false;
 }
 
 void SoloJobManager::pollLoop()
 {
     while(running_)
     {
-        refreshWork();
-        for(int i = 0; i < 100 && running_; i++)
+        bool rateLimited = refreshWork();
+
+        // Cycle normal : 10s (100 x 100ms). En cas de 429, on patiente
+        // beaucoup plus longtemps (90s) avant de reessayer, pour
+        // laisser le temps a la limite de debit du coordinateur de se
+        // reinitialiser plutot que d'insister au meme rythme.
+        int waitSteps = rateLimited ? 900 : 100;
+        for(int i = 0; i < waitSteps && running_; i++)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
