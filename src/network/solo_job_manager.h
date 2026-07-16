@@ -24,7 +24,12 @@ public:
         uint64_t height
     ) override;
 
+    uint64_t getAcceptedCount() const override { return acceptedCount_.load(); }
+    uint64_t getRejectedCount() const override { return rejectedCount_.load(); }
+
 private:
+    std::atomic<uint64_t> acceptedCount_{0};
+    std::atomic<uint64_t> rejectedCount_{0};
     WorkClient client_;
     std::mutex mutex_;
     MiningJob current_;

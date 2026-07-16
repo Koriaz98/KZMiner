@@ -137,6 +137,15 @@ void SoloJobManager::submitNonce(
 {
     auto result = client_.submitNonce(job_id, nonce);
 
+    if(result.ok)
+    {
+        acceptedCount_++;
+    }
+    else
+    {
+        rejectedCount_++;
+    }
+
     std::lock_guard<std::mutex> lock(consoleMutex());
     if(result.ok)
     {
