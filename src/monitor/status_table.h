@@ -23,6 +23,7 @@ struct DashboardData
     uint64_t cpuHashrate = 0;
 
     std::vector<GpuRow> gpuRows;
+    std::string algoName;
 };
 
 void printStatusTable(const DashboardData& data);

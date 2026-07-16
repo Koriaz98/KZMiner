@@ -83,6 +83,7 @@ namespace
             << "  |  " << kBold << "CPU TEMP" << kReset << " " << (cpu.tempAvailable ? fmtTemp(cpu.tempCelsius) : std::string("N/A"))
             << "  |  " << kBold << "CPU USAGE" << kReset << " " << (cpu.usageAvailable ? fmtPercent(cpu.usagePercent) : std::string("N/A"))
             << "  |  " << kBold << "ACTIVE" << kReset << " " << (data.cpuThreads > 0 ? 1 : 0) << " CPU + " << activeGpus << " GPU"
+            << "  |  " << kBold << "ALGO" << kReset << " " << data.algoName
             << "\n";
 
         out << kCyan << kSep << "\n" << kReset;

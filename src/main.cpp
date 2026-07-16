@@ -300,6 +300,7 @@ int main(int argc, char **argv)
         dashboard.cpuThreads = cpuMiner ? cpuMiner->getThreadCount() : 0;
         dashboard.cpuHashrate = cpuRate;
         dashboard.gpuRows = gpuRows;
+        dashboard.algoName = algorithm->name();
 
         if(dashboard.accepted > previousAccepted)
         {

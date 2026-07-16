@@ -20,7 +20,7 @@ inline std::unique_ptr<Argon2idAlgorithm> makeBtc09Algorithm()
     constexpr uint32_t kMCostKib = 65536; // 64 MiB
 
     return std::make_unique<Argon2idAlgorithm>(
-        "argon2id-btc09",
+        "Argon2id-64MiB",
         kSalt,
         kHeaderSizeBytes,
         kNonceOffsetBytes,

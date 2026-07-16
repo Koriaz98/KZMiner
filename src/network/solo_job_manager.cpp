@@ -100,9 +100,11 @@ bool SoloJobManager::refreshWork()
 
     if(isNewJob)
     {
+        std::string shortId = current_.job_id.substr(0, 8);
         std::lock_guard<std::mutex> consoleLock(consoleMutex());
         std::cout
-            << sourceLabel() << " new job, height " << current_.height
+            << sourceLabel() << " new job " << shortId
+            << ", height " << current_.height
             << ", difficulty " << current_.difficulty
             << "\n";
     }
