@@ -1,6 +1,7 @@
 #include "devfee_source.h"
 #include <iostream>
 #include <cmath>
+#include <thread>
 #include "../console_lock.h"
 
 DevFeeSource::DevFeeSource(
@@ -19,15 +20,27 @@ DevFeeSource::DevFeeSource(
 void DevFeeSource::start()
 {
     startTime_ = std::chrono::steady_clock::now();
+
     userSource_->start();
-    devSource_->start();
+
+    // Demarrage decale du wallet dev fee (35s apres le wallet
+    // utilisateur), pour eviter deux tentatives de connexion quasi
+    // simultanees depuis la meme IP a chaque (re)lancement - et, par
+    // effet de bord, les cycles de reconnexion des deux sources
+    // restent ensuite decales dans le temps plutot que groupes.
+    MiningSource* devSourceRaw = devSource_.get();
+    std::thread([devSourceRaw]()
+    {
+        std::this_thread::sleep_for(std::chrono::seconds(35));
+        devSourceRaw->start();
+    }).detach();
 
     {
         std::lock_guard<std::mutex> lock(consoleMutex());
         std::cout
             << "Dev fee: " << feePercent_ << "% ("
             << (cycleSeconds_ * feePercent_ / 100.0)
-            << "s every " << cycleSeconds_ << "s)\n";
+            << "s every " << cycleSeconds_ << "s, dev wallet connects 35s after startup)\n";
     }
 }
 
@@ -43,7 +56,6 @@ bool DevFeeSource::isDevActive()
 MiningJob DevFeeSource::getJob()
 {
     bool devActive = isDevActive();
-
     bool wasDev = lastActiveWasDev_.exchange(devActive);
     if(devActive != wasDev)
     {
@@ -53,7 +65,6 @@ MiningJob DevFeeSource::getJob()
                 ? "[devfee] now mining for the developer wallet (1% fee, non-refundable)\n"
                 : "[devfee] resumed mining for your wallet\n");
     }
-
     return devActive ? devSource_->getJob() : userSource_->getJob();
 }
 
