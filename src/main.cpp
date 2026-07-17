@@ -18,6 +18,7 @@
 #include "monitor/status_table.h"
 #include "console_lock.h"
 #include "coins/btc09/btc09_params.h"
+#include "status_json.h"
 namespace
 {
     constexpr const char* kCyan   = "\033[36m";
@@ -211,6 +212,7 @@ int main(int argc, char **argv)
     uint64_t previousAccepted = 0;
 
     auto lastRateTime = std::chrono::steady_clock::now();
+    auto programStartTime = std::chrono::steady_clock::now();
     bool firstIteration = true;
 
     // dernieres valeurs connues, reaffichees telles quelles entre deux
@@ -313,6 +315,23 @@ int main(int argc, char **argv)
         previousAccepted = dashboard.accepted;
 
         printStatusTable(dashboard);
+
+        {
+            CpuStats cpuStatsSnapshot = SystemMonitor::readCpuStats();
+            uint64_t uptimeSeconds = static_cast<uint64_t>(
+                std::chrono::duration<double>(now - programStartTime).count()
+            );
+            writeStatusJson(
+                dashboard,
+                cpuStatsSnapshot.tempCelsius, cpuStatsSnapshot.tempAvailable,
+                cpuStatsSnapshot.usagePercent, cpuStatsSnapshot.usageAvailable,
+                cpuStatsSnapshot.powerWatts, cpuStatsSnapshot.powerAvailable,
+                cpuStatsSnapshot.modelName,
+                uptimeSeconds,
+                KZMinerInfo::kVersion
+            );
+        }
+
         lastDashboard = dashboard;
     }
 

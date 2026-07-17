@@ -60,6 +60,7 @@ add_executable(
     kzminer
 
     src/main.cpp
+    src/status_json.cpp
     src/config/config.cpp
     src/cpu/cpu_miner.cpp
     src/gpu/gpu_miner.cpp
