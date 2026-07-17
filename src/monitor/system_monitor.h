@@ -31,6 +31,7 @@ struct GpuStats
     double memTotalMiB = 0.0;
     double powerWatts = 0.0;
     int fanPercent = -1;
+    int pciBusDecimal = 0; // partie "bus" de l'adresse PCI, convertie en decimal (ex: 0a:00.0 -> 10)
 };
 
 class SystemMonitor

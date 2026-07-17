@@ -244,7 +244,7 @@ std::vector<GpuStats> SystemMonitor::readGpuStats()
 
     const char *cmd =
         "nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,"
-        "memory.used,memory.total,power.draw,fan.speed "
+        "memory.used,memory.total,power.draw,fan.speed,pci.bus_id "
         "--format=csv,noheader,nounits 2>/dev/null";
 
     FILE *pipe = popen(cmd, "r");
@@ -274,7 +274,7 @@ std::vector<GpuStats> SystemMonitor::readGpuStats()
             fields.push_back(start == std::string::npos ? "" : token.substr(start));
         }
 
-        if(fields.size() < 8) continue;
+        if(fields.size() < 9) continue;
 
         GpuStats g;
         try
@@ -287,6 +287,23 @@ std::vector<GpuStats> SystemMonitor::readGpuStats()
             g.memTotalMiB = std::stod(fields[5]);
             g.powerWatts = std::stod(fields[6]);
             try { g.fanPercent = std::stoi(fields[7]); } catch(...) { g.fanPercent = -1; }
+
+            // pci.bus_id format nvidia-smi : "00000000:03:00.0" - on
+            // extrait la 2e partie ("03"), convertie en decimal, pour
+            // le format "bus_numbers" attendu par HiveOS.
+            try
+            {
+                const std::string &busId = fields[8];
+                size_t firstColon = busId.find(':');
+                size_t secondColon = (firstColon != std::string::npos)
+                    ? busId.find(':', firstColon + 1) : std::string::npos;
+                if(firstColon != std::string::npos && secondColon != std::string::npos)
+                {
+                    std::string busHex = busId.substr(firstColon + 1, secondColon - firstColon - 1);
+                    g.pciBusDecimal = std::stoi(busHex, nullptr, 16);
+                }
+            }
+            catch(...) { g.pciBusDecimal = 0; }
         }
         catch(...)
         {

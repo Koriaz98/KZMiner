@@ -17,6 +17,7 @@ else
     hs_gpu=$(jq -c '[.gpus[].hashrate_hs]' "$status_file")
     temp_gpu=$(jq -c '[.gpus[].temp_c]' "$status_file")
     fan_gpu=$(jq -c '[.gpus[].fan_percent]' "$status_file")
+    bus_numbers=$(jq -c '[.gpus[].pci_bus_decimal]' "$status_file")
     uptime=$(jq -r '.uptime' "$status_file")
     ver=$(jq -r '.ver' "$status_file")
     accepted=$(jq -r '.shares.accepted' "$status_file")
@@ -27,10 +28,11 @@ else
         --argjson hs "$hs_gpu" \
         --argjson temp "$temp_gpu" \
         --argjson fan "$fan_gpu" \
+        --argjson bus_numbers "$bus_numbers" \
         --argjson uptime "$uptime" \
         --arg ver "kzminer/$ver" \
         --argjson accepted "$accepted" \
         --argjson rejected "$rejected" \
         --arg algo "$algo" \
-        '{hs: $hs, hs_units: "hs", temp: $temp, fan: $fan, uptime: $uptime, ver: $ver, ar: [$accepted, $rejected], algo: $algo}')
+        '{hs: $hs, hs_units: "hs", temp: $temp, fan: $fan, bus_numbers: $bus_numbers, uptime: $uptime, ver: $ver, ar: [$accepted, $rejected], algo: $algo}')
 fi

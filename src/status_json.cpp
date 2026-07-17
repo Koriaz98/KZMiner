@@ -62,6 +62,7 @@ void writeStatusJson(
         gj["power_w"] = g.powerWatts;
         gj["mem_used_mib"] = g.memUsedMiB;
         gj["mem_total_mib"] = g.memTotalMiB;
+        gj["pci_bus_decimal"] = g.pciBusDecimal;
         gpus.push_back(gj);
         totalGpuPower += g.powerWatts;
     }
