@@ -19,6 +19,14 @@ the rest of the codebase.
 - CPU and GPU mining, individually or combined in the same process
 - Solo mining via the official BTC09 Open Mining Protocol v1 (HTTP)
 - Pool mining via a third-party protocol (tested against `hk.ntmminer.com`)
+  > **Note:** some third-party pools may temporarily rate-limit or
+  > delay accepting new connections after several reconnect attempts
+  > in a short period (observed taking up to ~5 minutes to clear on
+  > `hk.ntmminer.com` during testing). KZMiner's reconnect delay is
+  > fixed at 60 seconds between attempts specifically to avoid making
+  > this worse. If your rig shows repeated `connection lost,
+  > reconnecting` messages, this is normal recovery behavior, not a
+  > bug - just let it retry.
 - Multi-GPU support with automatic CUDA device ordering (`CUDA_DEVICE_ORDER=PCI_BUS_ID`)
 - Configurable GPU intensity (VRAM usage) from 1 (light) to 5 (maximum)
 - Automatic reconnection on pool connection loss
