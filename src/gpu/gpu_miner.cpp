@@ -30,7 +30,7 @@ double GpuMiner::intensityFraction(int intensity)
         case 2: return 0.30;
         case 3: return 0.50;
         case 4: return 0.70;
-        case 5: return 0.90;
+        case 5: return 0.97;
         default: return 0.50;
     }
 }
