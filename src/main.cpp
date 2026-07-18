@@ -333,6 +333,7 @@ int main(int argc, char **argv)
         dashboard.gpuRows = gpuRows;
         dashboard.algoName = algorithm->name();
         dashboard.walletAddress = walletAddress;
+        dashboard.poolAddress = config.pool;
 
         if(dashboard.accepted > previousAccepted)
         {
