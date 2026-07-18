@@ -1,8 +1,8 @@
 #include "cpu_miner.h"
 #include "../algo/algorithm.h"
-#include "../console_lock.h"
+#include "../console_output.h"
 #include "../network/mining_source.h"
-#include <iostream>
+#include <sstream>
 #include <thread>
 #include <vector>
 #include <chrono>
@@ -19,17 +19,14 @@ void CPUMiner::worker(int cpuId)
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(cpuId, &cpuset);
-
     pthread_t current = pthread_self();
     int rc = pthread_setaffinity_np(current, sizeof(cpu_set_t), &cpuset);
     if(rc != 0)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "Warning: failed to set affinity for thread on core " << cpuId << "\n";
+        pushLogLine("Warning: failed to set affinity for thread on core " + std::to_string(cpuId));
     }
 
     int globalId = workerOffset_ + cpuId;
-
     std::vector<uint8_t> lastHeader;
     uint64_t nonce = 0;
     uint64_t rangeStart = 0;
@@ -38,7 +35,6 @@ void CPUMiner::worker(int cpuId)
     while(true)
     {
         MiningJob job = source_->getJob();
-
         if(!job.valid)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -48,7 +44,6 @@ void CPUMiner::worker(int cpuId)
         if(job.header != lastHeader)
         {
             lastHeader = job.header;
-
             if(job.nonce_end != 0)
             {
                 uint64_t span = job.nonce_end - job.nonce_start;
@@ -63,7 +58,6 @@ void CPUMiner::worker(int cpuId)
                 rangeStart = (static_cast<uint64_t>(globalId) << 56);
                 rangeEnd   = (static_cast<uint64_t>(globalId) + 1) << 56;
             }
-
             nonce = rangeStart;
         }
 
@@ -73,7 +67,6 @@ void CPUMiner::worker(int cpuId)
             job.argon_time,
             job.argon_mem_kib
         );
-
         hashes++;
 
         if(std::memcmp(result.data(), job.target.data(), 32) <= 0)
@@ -93,13 +86,11 @@ void CPUMiner::worker(int cpuId)
 
 void CPUMiner::launchWorkers()
 {
-    {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cout
-            << "CPU: " << threads << " thread(s), affinity enabled, "
-            << "global worker id " << workerOffset_ << ".." << (workerOffset_ + threads - 1)
-            << " / " << totalWorkers_ << "\n";
-    }
+    std::ostringstream oss;
+    oss << "CPU: " << threads << " thread(s), affinity enabled, "
+        << "global worker id " << workerOffset_ << ".." << (workerOffset_ + threads - 1)
+        << " / " << totalWorkers_;
+    pushLogLine(oss.str());
 
     for(int i = 0; i < threads; i++)
     {

@@ -1,8 +1,8 @@
 #include "devfee_source.h"
-#include <iostream>
+#include <sstream>
 #include <cmath>
 #include <thread>
-#include "../console_lock.h"
+#include "../console_output.h"
 
 DevFeeSource::DevFeeSource(
     std::unique_ptr<MiningSource> userSource,
@@ -35,13 +35,11 @@ void DevFeeSource::start()
         devSourceRaw->start();
     }).detach();
 
-    {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cout
-            << "Dev fee: " << feePercent_ << "% ("
-            << (cycleSeconds_ * feePercent_ / 100.0)
-            << "s every " << cycleSeconds_ << "s, dev wallet connects 35s after startup)\n";
-    }
+    std::ostringstream oss;
+    oss << "Dev fee: " << feePercent_ << "% ("
+        << (cycleSeconds_ * feePercent_ / 100.0)
+        << "s every " << cycleSeconds_ << "s, dev wallet connects 35s after startup)";
+    pushLogLine(oss.str());
 }
 
 bool DevFeeSource::isDevActive()
@@ -59,11 +57,9 @@ MiningJob DevFeeSource::getJob()
     bool wasDev = lastActiveWasDev_.exchange(devActive);
     if(devActive != wasDev)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cout
-            << (devActive
-                ? "[devfee] now mining for the developer wallet (1% fee, non-refundable)\n"
-                : "[devfee] resumed mining for your wallet\n");
+        pushLogLine(devActive
+            ? "[devfee] now mining for the developer wallet (1% fee, non-refundable)"
+            : "[devfee] resumed mining for your wallet");
     }
     return devActive ? devSource_->getJob() : userSource_->getJob();
 }

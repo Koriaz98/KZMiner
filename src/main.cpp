@@ -17,6 +17,7 @@
 #include "devfee/devfee_config.h"
 #include "monitor/status_table.h"
 #include "console_lock.h"
+#include "console_output.h"
 #include "coins/btc09/btc09_params.h"
 #include "status_json.h"
 namespace
@@ -79,10 +80,27 @@ static void resolveWalletAndWorker(
     }
 }
 
+namespace
+{
+    void restoreCursorAndExit(int)
+    {
+        // Reaffiche le curseur du terminal (masque par le panneau
+        // d'affichage fixe pendant l'execution) avant de vraiment
+        // quitter, pour ne pas laisser le terminal de l'utilisateur
+        // dans un etat sans curseur visible apres un Ctrl+C.
+        std::cout << "\033[?25h" << std::flush;
+        std::signal(SIGINT, SIG_DFL);
+        std::signal(SIGTERM, SIG_DFL);
+        std::raise(SIGINT);
+    }
+}
+
 int main(int argc, char **argv)
 {
     setenv("CUDA_DEVICE_ORDER", "PCI_BUS_ID", 1);
     std::signal(SIGPIPE, SIG_IGN);
+    std::signal(SIGINT, restoreCursorAndExit);
+    std::signal(SIGTERM, restoreCursorAndExit);
 
     MinerConfig config = ConfigParser::parse(argc, argv);
 
@@ -94,7 +112,7 @@ int main(int argc, char **argv)
 
     checkForUpdate();
 
-    for(int i = 3; i > 0; i--)
+    for(int i = 5; i > 0; i--)
     {
         std::cout << "\rStarting in " << i << "s... " << std::flush;
         std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -303,14 +321,15 @@ int main(int argc, char **argv)
         dashboard.cpuHashrate = cpuRate;
         dashboard.gpuRows = gpuRows;
         dashboard.algoName = algorithm->name();
+        dashboard.walletAddress = walletAddress;
 
         if(dashboard.accepted > previousAccepted)
         {
             uint64_t newlyAccepted = dashboard.accepted - previousAccepted;
-            std::lock_guard<std::mutex> lock(consoleMutex());
-            std::cout
-                << "\033[32m[shares] +" << newlyAccepted
-                << " accepted (" << dashboard.accepted << " total)\033[0m\n";
+            pushLogLine(
+                "\033[32m[shares] +" + std::to_string(newlyAccepted)
+                + " accepted (" + std::to_string(dashboard.accepted) + " total)\033[0m"
+            );
         }
         previousAccepted = dashboard.accepted;
 

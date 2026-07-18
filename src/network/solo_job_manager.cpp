@@ -1,6 +1,6 @@
 #include "solo_job_manager.h"
-#include "../console_lock.h"
-#include <iostream>
+#include "../console_output.h"
+#include <sstream>
 #include <chrono>
 #include <cstdio>
 
@@ -73,14 +73,13 @@ bool SoloJobManager::refreshWork()
     if(!work.has_value())
     {
         bool rateLimited = (client_.getLastHttpStatus() == 429);
-        std::lock_guard<std::mutex> lock(consoleMutex());
         if(rateLimited)
         {
-            std::cerr << sourceLabel() << " rate limited, retrying in 90s\n";
+            pushLogLine(sourceLabel() + " rate limited, retrying in 90s");
         }
         else
         {
-            std::cerr << sourceLabel() << " couldn't fetch work, retrying\n";
+            pushLogLine(sourceLabel() + " couldn't fetch work, retrying");
         }
         return rateLimited;
     }
@@ -101,12 +100,11 @@ bool SoloJobManager::refreshWork()
     if(isNewJob)
     {
         std::string shortId = current_.job_id.substr(0, 8);
-        std::lock_guard<std::mutex> consoleLock(consoleMutex());
-        std::cout
-            << sourceLabel() << " new job " << shortId
+        std::ostringstream oss;
+        oss << sourceLabel() << " new job " << shortId
             << ", height " << current_.height
-            << ", difficulty " << current_.difficulty
-            << "\n";
+            << ", difficulty " << current_.difficulty;
+        pushLogLine(oss.str());
     }
 
     return false;
@@ -139,11 +137,7 @@ void SoloJobManager::start()
         if(current_.valid) break;
 
         int waitSeconds = rateLimited ? 90 : 2;
-        {
-            std::lock_guard<std::mutex> lock(consoleMutex());
-            std::cerr << sourceLabel() << " retrying initial connection in "
-                       << waitSeconds << "s...\n";
-        }
+        pushLogLine(sourceLabel() + " retrying initial connection in " + std::to_string(waitSeconds) + "s...");
         std::this_thread::sleep_for(std::chrono::seconds(waitSeconds));
     }
     pollThread_ = std::thread(&SoloJobManager::pollLoop, this);
@@ -173,15 +167,15 @@ void SoloJobManager::submitNonce(
         rejectedCount_++;
     }
 
-    std::lock_guard<std::mutex> lock(consoleMutex());
     if(result.ok)
     {
-        std::cout
-            << "\n\033[1;32m*** BLOCK FOUND (solo) *** height=" << height
-            << " block_id=" << result.block_id << "\033[0m\n\n";
+        std::ostringstream oss;
+        oss << "\033[1;32m*** BLOCK FOUND (solo) *** height=" << height
+            << " block_id=" << result.block_id << "\033[0m";
+        pushLogLine(oss.str());
     }
     else
     {
-        std::cout << sourceLabel() << " submission rejected: " << result.error_code << "\n";
+        pushLogLine(sourceLabel() + " submission rejected: " + result.error_code);
     }
 }

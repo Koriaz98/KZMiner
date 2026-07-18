@@ -1,5 +1,6 @@
 #include "../version.h"
 #include "../console_lock.h"
+#include "../console_output.h"
 #include "status_table.h"
 #include <iostream>
 #include <iomanip>
@@ -64,6 +65,7 @@ namespace
         std::ostringstream out;
 
         out << kBold << kCyan << " KZMiner " << KZMinerInfo::kVersion << " - " << KZMinerInfo::kTagline << " " << kReset << "\n";
+        out << kBold << kCyan << " Wallet: " << data.walletAddress << " " << kReset << "\n";
         out << kCyan << kSep << "\n" << kReset;
 
         out
@@ -167,82 +169,130 @@ namespace
 
         return out.str();
     }
-
-    int countLines(const std::string& text)
-    {
-        int n = 0;
-        for(char c : text) if(c == '\n') n++;
-        return n;
-    }
 }
 
 void printStatusTable(const DashboardData& data)
 {
-    std::lock_guard<std::mutex> lock(consoleMutex());
-
     static bool isTty = (isatty(STDOUT_FILENO) != 0);
-    static bool firstCall = true;
-    static int dashboardLines = 0;
-    static int termRows = 50;
 
     std::string text = buildDashboardText(data);
 
     if(!isTty)
     {
+        std::lock_guard<std::mutex> lock(consoleMutex());
         std::cout << "\n" << text << std::flush;
         return;
     }
 
-    if(firstCall)
+    // Approche par "differentiel" (comme ncurses/htop) : on compare
+    // le nouveau cadre au precedent, ligne par ligne, et on ne touche
+    // que les lignes qui ont reellement change (chiffres qui varient)
+    // - les separateurs, en-tetes et logs deja affiches restent
+    // parfaitement intacts d'un cycle a l'autre. Elimine le
+    // clignotement d'un reaffichage complet a chaque cycle, sans
+    // revenir a la zone de defilement restreinte (DECSTBM) qui se
+    // corrompait sous certains multiplexeurs de terminal. Cette
+    // fonction n'est appelee que par le thread principal (les autres
+    // threads deposent leurs messages via pushLogLine()), pas besoin
+    // de proteger la comparaison elle-meme, seule l'ecriture finale
+    // sur le terminal reste sous mutex.
+    std::vector<std::string> newLines;
     {
-        dashboardLines = countLines(text);
+        std::istringstream textStream(text);
+        std::string textLine;
+        while(std::getline(textStream, textLine)) newLines.push_back(textLine);
+    }
+    int dashboardLines = static_cast<int>(newLines.size());
+    newLines.push_back("");
 
-        struct winsize ws{};
-        if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0)
-        {
-            termRows = ws.ws_row;
-        }
-        if(termRows <= dashboardLines + 2)
-        {
-            termRows = dashboardLines + 10;
-        }
+    int termRows = 50;
+    struct winsize ws{};
+    if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0)
+    {
+        termRows = ws.ws_row;
+    }
 
-        // Repart d'un ecran completement vide, position connue et
-        // fiable - les messages affiches avant ce premier appel (logo,
-        // "Wallet: ...", etc.) resteront dans le scrollback du
-        // terminal mais ne seront plus visibles une fois le panneau
-        // actif, comme avec htop/nvtop/btop.
-        std::cout << "\033[2J" << "\033[H";
+    int availableForLogs = termRows - dashboardLines - 2;
+    if(availableForLogs < 0) availableForLogs = 0;
 
-        // Reserve les "dashboardLines" premieres lignes au panneau ;
-        // le reste devient la zone de defilement des logs (DECSTBM).
-        // Remonter dans l'historique du terminal peut etre limite
-        // pendant que cette zone est active - comportement attendu de
-        // ce type d'interface, pas un bug.
-        std::cout << "\033[" << (dashboardLines + 1) << ";" << termRows << "r";
-        std::cout << "\033[" << (dashboardLines + 1) << ";1H";
+    std::vector<std::string> logs = recentLogLines();
+    if(static_cast<int>(logs.size()) > availableForLogs)
+    {
+        logs.erase(logs.begin(), logs.end() - availableForLogs);
+    }
+    for(const auto &line : logs) newLines.push_back(line);
 
+    // previousLines persiste entre les appels (fonction statique,
+    // un seul thread appelant - voir commentaire plus haut). Vide au
+    // tout premier appel, ce qui force naturellement une premiere
+    // ecriture complete, necessaire pour etablir l'etat initial de
+    // l'ecran - comme le ferait n'importe quel outil de ce type.
+    static std::vector<std::string> previousLines;
+    static bool firstCall = true;
+    static int previousTermRows = 0;
+
+    std::ostringstream frame;
+    bool anyChange = false;
+
+    // Un redimensionnement de terminal (frequent lors d'un
+    // rattachement "screen -r", si la fenetre a change de taille
+    // entre-temps) invalide silencieusement notre memoire de ce qui
+    // est reellement affiche : l'ecran peut avoir ete redessine ou
+    // reorganise par le multiplexeur sans que notre logique de
+    // differentiel en soit informee, laissant des residus visuels
+    // (lignes jugees "inchangees" a tort). On force alors un
+    // redessin complet, comme au tout premier appel.
+    bool forceFullRedraw = firstCall || (termRows != previousTermRows);
+    previousTermRows = termRows;
+
+    if(forceFullRedraw)
+    {
+        // Un effacement complet, au tout premier appel ou apres un
+        // redimensionnement detecte - pour repartir d'un ecran propre
+        // (le logo et les lignes affichees avant l'activation du
+        // panneau restent dans le scrollback mais ne doivent plus se
+        // melanger avec le debut du tableau). En dehors de ces cas,
+        // seule la logique differentielle ci-dessous s'applique, sans
+        // jamais effacer l'ecran entier.
+        //
+        // Le curseur du terminal est aussi masque (\033[?25l) : sans
+        // cela, il reste visible a l'endroit exact de la derniere
+        // ligne modifiee a chaque cycle, ce qui donne l'impression
+        // d'un petit rectangle qui se deplace sans arret - comme
+        // htop/nvtop, qui masquent egalement leur curseur en mode
+        // plein ecran.
+        frame << "\033[?25l";
+        frame << "\033[2J\033[H";
+        previousLines.clear();
         firstCall = false;
+        anyChange = true;
     }
 
-    std::cout << "\0337";
-    std::cout << "\033[1;1H";
-
-    // Efface et reecrit chaque ligne du panneau individuellement -
-    // ne touche jamais la zone de logs en dessous.
-    std::istringstream lineStream(text);
-    std::string line;
-    int lineCount = 0;
-    while(std::getline(lineStream, line))
+    for(size_t i = 0; i < newLines.size(); i++)
     {
-        std::cout << "\033[2K" << line << "\n";
-        lineCount++;
-    }
-    for(; lineCount < dashboardLines; lineCount++)
-    {
-        std::cout << "\033[2K" << "\n";
+        bool differs = (i >= previousLines.size()) || (previousLines[i] != newLines[i]);
+        if(!differs) continue;
+
+        anyChange = true;
+        // Positionnement direct sur la ligne concernee (acces
+        // aleatoire), plutot que de suivre sequentiellement depuis le
+        // haut - permet de ne jamais toucher aux lignes inchangees,
+        // meme situees entre deux lignes modifiees.
+        frame << "\033[" << (i + 1) << ";1H" << newLines[i] << "\033[K";
     }
 
-    std::cout << "\0338";
-    std::cout << std::flush;
+    // Si le nouveau cadre est plus court que le precedent (moins de
+    // lignes de logs affichees, cas rare), efface le surplus residuel.
+    if(newLines.size() < previousLines.size())
+    {
+        anyChange = true;
+        frame << "\033[" << (newLines.size() + 1) << ";1H" << "\033[J";
+    }
+
+    previousLines = newLines;
+
+    if(!anyChange) return;
+
+    std::lock_guard<std::mutex> lock(consoleMutex());
+    std::cout << frame.str() << std::flush;
 }

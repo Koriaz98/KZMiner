@@ -7,13 +7,19 @@
 # Le binaire est nomme "kzminer" (sans suffixe de version) a
 # l'interieur de ce paquet specifiquement pour HiveOS, pour ne jamais
 # avoir a modifier ce script lors des futures mises a jour de version.
+#
+# Pas de redirection de sortie ici (contrairement aux versions
+# precedentes) : KZMiner doit voir un vrai terminal (isatty()) pour
+# activer son panneau d'affichage fixe, comme dans une session SSH ou
+# screen normale. Rediriger vers un fichier ou un tube ferait
+# basculer KZMiner en mode texte simple. Les statistiques pour
+# h-stats.sh viennent du fichier JSON natif (/tmp/kzminer-status.json,
+# independant de toute sortie console), et HiveOS capture deja de son
+# cote la sortie de la session screen qu'il cree autour de ce script.
 
 . /hive-config/wallet.conf
 . ./h-manifest.conf
 
-log_file="$CUSTOM_LOG_BASENAME.log"
-mkdir -p "$(dirname "$log_file")"
-
 final_config="${CUSTOM_USER_CONFIG//%URL%/$CUSTOM_URL}"
 
-exec ./kzminer $final_config >>"$log_file" 2>&1
+exec ./kzminer $final_config

@@ -61,6 +61,7 @@ add_executable(
 
     src/main.cpp
     src/status_json.cpp
+    src/console_output.cpp
     src/config/config.cpp
     src/cpu/cpu_miner.cpp
     src/gpu/gpu_miner.cpp

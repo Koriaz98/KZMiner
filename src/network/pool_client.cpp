@@ -1,7 +1,7 @@
 #include "pool_client.h"
-#include "../console_lock.h"
+#include "../console_output.h"
 #include <nlohmann/json.hpp>
-#include <iostream>
+#include <sstream>
 #include <cstring>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -51,24 +51,21 @@ bool PoolClient::connect()
 
     if(getaddrinfo(host_.c_str(), portStr.c_str(), &hints, &res) != 0)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << sourceLabel() << " DNS lookup failed\n";
+        pushLogLine(sourceLabel() + " DNS lookup failed");
         return false;
     }
 
     sock_ = socket(AF_INET, SOCK_STREAM, 0);
     if(sock_ < 0)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << sourceLabel() << " socket error\n";
+        pushLogLine(sourceLabel() + " socket error");
         freeaddrinfo(res);
         return false;
     }
 
     if(::connect(sock_, res->ai_addr, res->ai_addrlen) != 0)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << sourceLabel() << " connection failed\n";
+        pushLogLine(sourceLabel() + " connection failed");
         freeaddrinfo(res);
         close(sock_);
         sock_ = -1;
@@ -77,10 +74,7 @@ bool PoolClient::connect()
 
     freeaddrinfo(res);
 
-    {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cout << sourceLabel() << " connected\n";
-    }
+    pushLogLine(sourceLabel() + " connected");
 
     json login;
     login["id"] = 1;
@@ -98,8 +92,7 @@ void PoolClient::sendJson(const std::string& payload)
     ssize_t sent = send(sock_, line.c_str(), line.size(), MSG_NOSIGNAL);
     if(sent < 0)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << sourceLabel() << " send failed\n";
+        pushLogLine(sourceLabel() + " send failed");
     }
 }
 
@@ -114,8 +107,7 @@ void PoolClient::run()
         ssize_t n = recv(sock_, chunk, sizeof(chunk) - 1, 0);
         if(n <= 0)
         {
-            std::lock_guard<std::mutex> lock(consoleMutex());
-            std::cerr << sourceLabel() << " disconnected\n";
+            pushLogLine(sourceLabel() + " disconnected");
             break;
         }
 
@@ -146,8 +138,7 @@ void PoolClient::handleLine(const std::string& line)
     }
     catch(...)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << sourceLabel() << " received malformed message\n";
+        pushLogLine(sourceLabel() + " received malformed message");
         return;
     }
 
@@ -160,8 +151,7 @@ void PoolClient::handleLine(const std::string& line)
             if(status == "ok")
             {
                 sessionSucceeded_ = true;
-                std::lock_guard<std::mutex> lock(consoleMutex());
-                std::cout << sourceLabel() << " logged in\n";
+                pushLogLine(sourceLabel() + " logged in");
             }
         }
         catch(...) {}
@@ -199,12 +189,11 @@ void PoolClient::handleLine(const std::string& line)
         currentJob_.valid       = true;
 
         std::string shortId = currentJob_.job_id.substr(0, 8);
-        std::lock_guard<std::mutex> consoleLock(consoleMutex());
-        std::cout
-            << sourceLabel() << " new job " << shortId
+        std::ostringstream oss;
+        oss << sourceLabel() << " new job " << shortId
             << ", height " << currentJob_.height
-            << ", difficulty " << currentJob_.difficulty
-            << "\n";
+            << ", difficulty " << currentJob_.difficulty;
+        pushLogLine(oss.str());
     }
 }
 

@@ -24,6 +24,7 @@ struct DashboardData
 
     std::vector<GpuRow> gpuRows;
     std::string algoName;
+    std::string walletAddress;
 };
 
 void printStatusTable(const DashboardData& data);

@@ -1,8 +1,8 @@
 #include "work_client.h"
-#include "../console_lock.h"
+#include "../console_output.h"
 #include <nlohmann/json.hpp>
 #include <curl/curl.h>
-#include <iostream>
+#include <sstream>
 #include <chrono>
 
 using json = nlohmann::json;
@@ -49,8 +49,7 @@ std::string WorkClient::httpPost(
     CURL* curl = curl_easy_init();
     if(!curl)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: curl_easy_init failed\n";
+        pushLogLine("WorkClient: curl_easy_init failed");
         return "";
     }
 
@@ -77,8 +76,7 @@ std::string WorkClient::httpPost(
 
     if(res != CURLE_OK)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: HTTP request failed: " << curl_easy_strerror(res) << "\n";
+        pushLogLine(std::string("WorkClient: HTTP request failed: ") + curl_easy_strerror(res));
         response.clear();
     }
 
@@ -118,31 +116,29 @@ std::optional<MiningWork> WorkClient::requestWork()
         if(lastHttpStatus_ != 429)
         {
             std::string preview = response.substr(0, 200);
-            std::lock_guard<std::mutex> lock(consoleMutex());
-            std::cerr << "WorkClient: invalid JSON in work response (length="
-                       << response.size() << "): \"" << preview << "\"\n";
+            std::ostringstream oss;
+            oss << "WorkClient: invalid JSON in work response (length="
+                << response.size() << "): \"" << preview << "\"";
+            pushLogLine(oss.str());
         }
         return std::nullopt;
     }
 
     if(j.contains("error_code"))
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: work error: " << j["error_code"].get<std::string>() << "\n";
+        pushLogLine("WorkClient: work error: " + j["error_code"].get<std::string>());
         return std::nullopt;
     }
 
     if(!j.contains("schema_version") || j["schema_version"].get<int>() != 1)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: unexpected schema_version\n";
+        pushLogLine("WorkClient: unexpected schema_version");
         return std::nullopt;
     }
 
     if(!j.contains("network") || j["network"].get<std::string>() != "btc09-mainnet")
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: unexpected network field\n";
+        pushLogLine("WorkClient: unexpected network field");
         return std::nullopt;
     }
 
@@ -158,22 +154,19 @@ std::optional<MiningWork> WorkClient::requestWork()
 
     if(work.job_id.size() != 32)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: job_id has unexpected length\n";
+        pushLogLine("WorkClient: job_id has unexpected length");
         return std::nullopt;
     }
 
     if(headerHex.size() != 176)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: header_hex has unexpected length\n";
+        pushLogLine("WorkClient: header_hex has unexpected length");
         return std::nullopt;
     }
 
     if(targetHex.size() != 64)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: target_hex has unexpected length\n";
+        pushLogLine("WorkClient: target_hex has unexpected length");
         return std::nullopt;
     }
 
@@ -193,8 +186,7 @@ std::optional<MiningWork> WorkClient::requestWork()
 
     if(!nonceIsZero)
     {
-        std::lock_guard<std::mutex> lock(consoleMutex());
-        std::cerr << "WorkClient: header nonce is not zero, rejecting work\n";
+        pushLogLine("WorkClient: header nonce is not zero, rejecting work");
         return std::nullopt;
     }
 
