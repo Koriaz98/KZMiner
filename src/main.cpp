@@ -3,6 +3,8 @@
 #include "version.h"
 #include <cstdlib>
 #include <csignal>
+#include <unistd.h>
+#include <sys/ioctl.h>
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -84,11 +86,20 @@ namespace
 {
     void restoreCursorAndExit(int)
     {
-        // Reaffiche le curseur du terminal (masque par le panneau
-        // d'affichage fixe pendant l'execution) avant de vraiment
-        // quitter, pour ne pas laisser le terminal de l'utilisateur
-        // dans un etat sans curseur visible apres un Ctrl+C.
-        std::cout << "\033[?25h" << std::flush;
+        // Avant de quitter : repositionne le curseur tout en bas du
+        // terminal (pas juste le rendre visible) et efface le reste
+        // en dessous - sinon le curseur reste exactement ou l'a
+        // laisse le dernier rafraichissement differentiel du panneau
+        // (potentiellement au milieu de l'ecran), et le prochain
+        // prompt du shell s'imprime alors par-dessus le contenu deja
+        // affiche a cet endroit, melangeant les deux visuellement.
+        struct winsize ws{};
+        int termRows = 24;
+        if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0)
+        {
+            termRows = ws.ws_row;
+        }
+        std::cout << "\033[" << termRows << ";1H" << "\033[?25h" << "\n" << std::flush;
         std::signal(SIGINT, SIG_DFL);
         std::signal(SIGTERM, SIG_DFL);
         std::raise(SIGINT);
