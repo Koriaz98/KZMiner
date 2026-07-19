@@ -23,7 +23,8 @@ public:
         const std::string& job_id,
         uint64_t nonce,
         const std::vector<uint8_t>& hash,
-        uint64_t height
+        uint64_t height,
+        bool isDevFeeJob
     ) override;
 
     uint64_t getAcceptedCount() const override;

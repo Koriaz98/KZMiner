@@ -61,22 +61,34 @@ MiningJob DevFeeSource::getJob()
             ? "[devfee] now mining for the developer wallet (1% fee, non-refundable)"
             : "[devfee] resumed mining for your wallet");
     }
-    return devActive ? devSource_->getJob() : userSource_->getJob();
+
+    MiningJob job = devActive ? devSource_->getJob() : userSource_->getJob();
+
+    // Fige dans le job lui-meme quelle source a ete choisie A CET
+    // INSTANT precis - submitNonce() reutilisera cette decision telle
+    // quelle, plutot que de reevaluer isDevActive() a un instant
+    // different (potentiellement apres que la fenetre de 1% ait
+    // bascule), ce qui pourrait autrement envoyer un resultat calcule
+    // avec le job utilisateur vers la connexion dev fee, ou l'inverse.
+    job.isDevFeeJob = devActive;
+
+    return job;
 }
 
 void DevFeeSource::submitNonce(
     const std::string& job_id,
     uint64_t nonce,
     const std::vector<uint8_t>& hash,
-    uint64_t height
+    uint64_t height,
+    bool isDevFeeJob
 )
 {
-    if(isDevActive())
+    if(isDevFeeJob)
     {
-        devSource_->submitNonce(job_id, nonce, hash, height);
+        devSource_->submitNonce(job_id, nonce, hash, height, isDevFeeJob);
     }
     else
     {
-        userSource_->submitNonce(job_id, nonce, hash, height);
+        userSource_->submitNonce(job_id, nonce, hash, height, isDevFeeJob);
     }
 }

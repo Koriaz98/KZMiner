@@ -26,6 +26,7 @@ struct DashboardData
     std::string algoName;
     std::string walletAddress;
     std::string poolAddress;
+    std::string mode;
 };
 
 void printStatusTable(const DashboardData& data);

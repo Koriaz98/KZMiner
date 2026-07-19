@@ -188,7 +188,7 @@ void PoolClient::handleLine(const std::string& line)
         currentJob_.nonce_end   = p.value("nonce_end", 0ULL);
         currentJob_.valid       = true;
 
-        std::string shortId = currentJob_.job_id.substr(0, 8);
+        std::string shortId = currentJob_.job_id.substr(0, 16);
         std::ostringstream oss;
         oss << sourceLabel() << " new job " << shortId
             << ", height " << currentJob_.height

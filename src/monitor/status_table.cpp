@@ -55,7 +55,7 @@ namespace
     }
 
     const std::string kSep =
-        "+---------------------------------------------------------------------------------------------------------------+";
+        "+-----------------------------------------------------------------------------------------------------------------+";
 
     std::string buildDashboardText(const DashboardData& data)
     {
@@ -73,7 +73,21 @@ namespace
             << kBold << "HASHRATE" << kReset << " " << kGreen << data.totalHashrate << " H/s" << kReset
             << "  |  " << kBold << "SHARES" << kReset << " " << kGreen << data.shares << kReset
             << " (" << kGreen << data.accepted << " accepted" << kReset
-            << ", " << kRed << data.rejected << " rejected" << kReset << ")"
+            << ", " << kRed << data.rejected << " rejected" << kReset << ")";
+
+        // En solo, "accepted" represente deja des blocs entiers valides
+        // (pas des parts partielles comme en pool) - ce compteur
+        // dedie le rend explicite, evitant toute ambiguite sur ce que
+        // "accepted" signifie reellement selon le mode. Non affiche en
+        // pool : le protocole des pools tiers ne remonte generalement
+        // pas si une part acceptee correspondait aussi a un bloc reseau
+        // complet, on ne dispose donc d'aucune donnee fiable a montrer.
+        if(data.mode == "solo")
+        {
+            out << "  |  " << kBold << "BLOCK FOUND" << kReset << " " << kGreen << data.accepted << kReset;
+        }
+
+        out
             << "  |  " << kBold << "DIFFICULTY" << kReset << " " << kYellow << data.difficulty << kReset
             << "  |  " << kBold << "HEIGHT" << kReset << " " << kYellow << data.height << kReset
             << "\n";

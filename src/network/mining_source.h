@@ -19,6 +19,14 @@ struct MiningJob
     // une sous-plage arbitraire de l'espace 64-bit complet.
     uint64_t nonce_start = 0;
     uint64_t nonce_end = 0;
+
+    // Fige, au moment ou ce job est recupere, si c'est un job du
+    // wallet dev fee ou de l'utilisateur - reutilise tel quel a la
+    // soumission (voir MiningSource::submitNonce) plutot que de
+    // reevaluer la bascule dev fee a cet instant different, ce qui
+    // pourrait ne plus correspondre au job reellement calcule si la
+    // fenetre a bascule entre-temps.
+    bool isDevFeeJob = false;
 };
 
 class MiningSource
@@ -31,7 +39,8 @@ public:
         const std::string& job_id,
         uint64_t nonce,
         const std::vector<uint8_t>& hash,
-        uint64_t height
+        uint64_t height,
+        bool isDevFeeJob
     ) = 0;
 
     // Statistiques de soumission confirmees par le serveur (pool ou

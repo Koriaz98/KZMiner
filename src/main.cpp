@@ -334,6 +334,7 @@ int main(int argc, char **argv)
         dashboard.algoName = algorithm->name();
         dashboard.walletAddress = walletAddress;
         dashboard.poolAddress = config.pool;
+        dashboard.mode = config.mode;
 
         if(dashboard.accepted > previousAccepted)
         {

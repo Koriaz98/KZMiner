@@ -201,8 +201,13 @@ void GpuMiner::worker(int deviceIndex, int globalId)
                 if(std::memcmp(hashBuf.data(), job.target.data(), 32) <= 0)
                 {
                     sharesFound++;
-                    MiningJob freshJob = source_->getJob();
-                    source_->submitNonce(freshJob.job_id, nonce + i, hashBuf, job.height);
+                    // Soumettre avec le job_id du job REELLEMENT hashe
+                    // (job, capture au debut de ce cycle) - PAS un job
+                    // fraichement recupere ici, qui pourrait deja avoir
+                    // change entre-temps et ne plus correspondre au
+                    // calcul effectue, entrainant un rejet cote
+                    // coordinateur/pool malgre un resultat valide.
+                    source_->submitNonce(job.job_id, nonce + i, hashBuf, job.height, job.isDevFeeJob);
                 }
             }
 
