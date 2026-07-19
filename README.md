@@ -58,6 +58,26 @@ public constant in `src/devfee/devfee_config.h`.
 > KZMiner - it applies to any miner used against any pool - but it is
 > easy to overlook, so please check both fees, not just this one.
 
+## Support the project
+
+KZMiner's 1% developer fee is built into the miner itself and applies
+automatically - no separate action needed on your part. If you'd
+additionally like to support development directly, voluntary
+donations are welcome at the addresses below (completely optional,
+and separate from the built-in fee):
+
+- **BTC:** `bc1q6thrv7xwk68aghva5grp87t0yzzzww9alllace`
+- **ADA:** `addr1q8vlpa2ss5pa28w30x0g8l08r68xp36khlwuljl8ruq5atmltmfjk6va4tnqqyuvf7fpxfxxga40dt3u35zcjtl6nggqqmarq9`
+- **SOL:** `EVNsetXMDcrcZUSaf7iYQavRSGL414RWnTjvYEtGf1rE`
+- **BNB:** `0x4b44F5cF3c4cE4Cd0Ee765c0CD754958569E060e`
+- **USDT (Solana network only):** `F3odevi1ipdkbDKspv3Y5LQirDsQvCLWgkLVqy2wrLp5`
+
+> Double-check you're sending on the correct network before
+> transferring - sending on the wrong network may result in
+> permanent loss of funds.
+
+Thank you for considering it!
+
 ## License
 
 KZMiner is licensed under the **GNU General Public License v2 or later
