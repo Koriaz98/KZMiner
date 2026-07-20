@@ -206,10 +206,12 @@ int main(int argc, char **argv)
         }
     }
 
+    auto algorithm = makeBtc09Algorithm();
+
     int gpuDeviceCount = 0;
     if(config.gpuEnabled)
     {
-        GpuMiner probe(source.get(), config.intensity, 0, 1);
+        GpuMiner probe(source.get(), algorithm.get(), config.intensity, 0, 1);
         gpuDeviceCount = probe.getDeviceCount();
     }
 
@@ -219,8 +221,6 @@ int main(int argc, char **argv)
         std::cerr << "Error: no worker enabled (need --cpu and/or --gpu)\n";
         return 1;
     }
-
-    auto algorithm = makeBtc09Algorithm();
 
     std::unique_ptr<CPUMiner> cpuMiner;
     if(config.cpuEnabled)
@@ -232,7 +232,7 @@ int main(int argc, char **argv)
     std::unique_ptr<GpuMiner> gpuMiner;
     if(config.gpuEnabled)
     {
-        gpuMiner = std::make_unique<GpuMiner>(source.get(), config.intensity, cpuThreads, totalWorkers);
+        gpuMiner = std::make_unique<GpuMiner>(source.get(), algorithm.get(), config.intensity, cpuThreads, totalWorkers);
         gpuMiner->launchWorkers();
     }
 

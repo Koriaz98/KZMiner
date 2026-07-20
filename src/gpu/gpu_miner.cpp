@@ -1,24 +1,27 @@
 #include "gpu_miner.h"
+#include "gpu_hasher.h"
 #include "../network/mining_source.h"
+#include "../algo/algorithm.h"
 #include "../console_output.h"
 
-#include "argon2-gpu-common/argon2params.h"
-#include "argon2-cuda/globalcontext.h"
-#include "argon2-cuda/programcontext.h"
-#include "argon2-cuda/processingunit.h"
-#include "argon2-cuda/cudaexception.h"
-
-#include <cuda_runtime.h>
 #include <sstream>
 #include <thread>
 #include <vector>
 #include <chrono>
 #include <cstring>
 #include <exception>
+#include <stdexcept>
+
+// Ce fichier ne contient plus aucune reference a CUDA/argon2-gpu -
+// toute la logique specifique au backend GPU concret est encapsulee
+// derriere Algorithm::createGpuHasher()/GpuHasher, dans un fichier
+// dedie a l'algorithme (voir src/algo/argon2id/argon2id_gpu_hasher.cpp
+// pour l'implementation actuelle, la seule a ce jour). Un futur
+// algorithme fournirait sa propre implementation de GpuHasher sans
+// jamais avoir a modifier ce fichier.
 
 namespace
 {
-    const uint8_t kSalt[] = { 'B','T','C','0','9','/','p','o','w','/','v','1' };
     constexpr size_t kVramReserveBytes = 512ULL * 1024 * 1024;
 }
 
@@ -35,15 +38,14 @@ double GpuMiner::intensityFraction(int intensity)
     }
 }
 
-GpuMiner::GpuMiner(MiningSource* source, int intensity, int workerOffset, int totalWorkers)
-: source_(source), intensity_(intensity), workerOffset_(workerOffset), totalWorkers_(totalWorkers)
+GpuMiner::GpuMiner(MiningSource* source, Algorithm* algorithm, int intensity, int workerOffset, int totalWorkers)
+: source_(source), algorithm_(algorithm), intensity_(intensity), workerOffset_(workerOffset), totalWorkers_(totalWorkers)
 {
 }
 
 int GpuMiner::getDeviceCount() const
 {
-    argon2::cuda::GlobalContext global;
-    return static_cast<int>(global.getAllDevices().size());
+    return algorithm_->gpuDeviceCount();
 }
 
 uint64_t GpuMiner::getDeviceHashes(int deviceIndex) const
@@ -61,24 +63,16 @@ void GpuMiner::worker(int deviceIndex, int globalId)
     {
         pushLogLine("GPU " + std::to_string(deviceIndex) + ": initializing...");
 
-        cudaError_t setDevErr = cudaSetDevice(deviceIndex);
-        if(setDevErr != cudaSuccess)
-        {
-            pushLogLine("GPU " + std::to_string(deviceIndex) + ": cudaSetDevice failed ("
-                + std::string(cudaGetErrorString(setDevErr)) + ")");
-            return;
-        }
-
         MiningJob job;
         while(true)
         {
             job = source_->getJob();
-            if(job.valid && job.header.size() == 88 && job.target.size() == 32) break;
+            if(job.valid && job.header.size() == algorithm_->inputSize() && job.target.size() == 32) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
 
         size_t freeBytes = 0, totalBytes = 0;
-        cudaMemGetInfo(&freeBytes, &totalBytes);
+        algorithm_->queryGpuMemory(deviceIndex, freeBytes, totalBytes);
 
         // Si la VRAM libre semble anormalement basse (moins de la moitie
         // du total), un ancien process peut etre en train de liberer sa
@@ -94,7 +88,7 @@ void GpuMiner::worker(int deviceIndex, int globalId)
                 << (retry + 1) << "/5)...";
             pushLogLine(oss.str());
             std::this_thread::sleep_for(std::chrono::seconds(3));
-            cudaMemGetInfo(&freeBytes, &totalBytes);
+            algorithm_->queryGpuMemory(deviceIndex, freeBytes, totalBytes);
         }
 
         size_t usableBytes = (freeBytes > kVramReserveBytes)
@@ -117,43 +111,19 @@ void GpuMiner::worker(int deviceIndex, int globalId)
             pushLogLine(oss.str());
         }
 
-        argon2::cuda::GlobalContext global;
-        auto &devices = global.getAllDevices();
-        if(deviceIndex >= static_cast<int>(devices.size()))
-        {
-            pushLogLine("GPU " + std::to_string(deviceIndex) + ": index out of range");
-            return;
-        }
-        const auto &device = devices[deviceIndex];
-
-        argon2::cuda::ProgramContext pc(
-            &global, { device },
-            argon2::ARGON2_ID, argon2::ARGON2_VERSION_13
-        );
-
-        argon2::Argon2Params params(
-            32,
-            kSalt, sizeof(kSalt),
-            nullptr, 0,
-            nullptr, 0,
-            job.argon_time, job.argon_mem_kib, 1
-        );
-
-        argon2::cuda::ProcessingUnit unit(
-            &pc, &params, &device,
-            batchSize, true, false
+        std::unique_ptr<GpuHasher> hasher = algorithm_->createGpuHasher(
+            deviceIndex, batchSize, job.argon_time, job.argon_mem_kib
         );
 
         std::vector<uint8_t> lastHeader;
         uint64_t rangeStart = 0, rangeEnd = 0, nonce = 0;
-        std::vector<uint8_t> buffer(88);
         std::vector<uint8_t> hashBuf(32);
 
         while(true)
         {
             job = source_->getJob();
 
-            if(!job.valid || job.header.size() != 88 || job.target.size() != 32)
+            if(!job.valid || job.header.size() != algorithm_->inputSize() || job.target.size() != 32)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
@@ -181,32 +151,19 @@ void GpuMiner::worker(int deviceIndex, int globalId)
 
             for(size_t i = 0; i < batchSize; i++)
             {
-                buffer = job.header;
-                uint64_t n = nonce + i;
-                for(int b = 0; b < 8; b++)
-                {
-                    buffer[buffer.size() - 8 + b] =
-                        static_cast<uint8_t>((n >> (8 * b)) & 0xff);
-                }
-                unit.setPassword(i, buffer.data(), buffer.size());
+                std::vector<uint8_t> password = algorithm_->buildPassword(job.header, nonce + i);
+                hasher->setPassword(i, password.data(), password.size());
             }
 
-            unit.beginProcessing();
-            unit.endProcessing();
+            hasher->computeBatch();
 
             for(size_t i = 0; i < batchSize; i++)
             {
-                unit.getHash(i, hashBuf.data());
+                hasher->getHash(i, hashBuf.data());
 
                 if(std::memcmp(hashBuf.data(), job.target.data(), 32) <= 0)
                 {
                     sharesFound++;
-                    // Soumettre avec le job_id du job REELLEMENT hashe
-                    // (job, capture au debut de ce cycle) - PAS un job
-                    // fraichement recupere ici, qui pourrait deja avoir
-                    // change entre-temps et ne plus correspondre au
-                    // calcul effectue, entrainant un rejet cote
-                    // coordinateur/pool malgre un resultat valide.
                     source_->submitNonce(job.job_id, nonce + i, hashBuf, job.height, job.isDevFeeJob);
                 }
             }
@@ -224,13 +181,9 @@ void GpuMiner::worker(int deviceIndex, int globalId)
             }
         }
     }
-    catch(const argon2::cuda::CudaException &ex)
-    {
-        pushLogLine("GPU " + std::to_string(deviceIndex) + ": fatal CUDA error: " + ex.what());
-    }
     catch(const std::exception &ex)
     {
-        pushLogLine("GPU " + std::to_string(deviceIndex) + ": non-CUDA exception: " + ex.what());
+        pushLogLine("GPU " + std::to_string(deviceIndex) + ": fatal error: " + ex.what());
     }
     catch(...)
     {

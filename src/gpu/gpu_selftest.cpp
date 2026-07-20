@@ -26,8 +26,12 @@ int runGpuSelfTest(int deviceIndex)
     const uint32_t argonTime = 1;
     const uint32_t argonMemKib = 65536;
 
+    // Salt officiel BTC09 : "BTC09/pow/v1", pas de secret ni de donnees additionnelles
+    static const uint8_t salt[] = { 'B','T','C','0','9','/','p','o','w','/','v','1' };
+    std::vector<uint8_t> saltVec(salt, salt + sizeof(salt));
+
     // --- Reference CPU (deja validee par de vrais shares acceptes) ---
-    std::vector<uint8_t> cpuHash = Argon2Engine::hash(header, argonTime, argonMemKib);
+    std::vector<uint8_t> cpuHash = Argon2Engine::hash(header, saltVec, argonTime, argonMemKib);
 
     // --- Calcul GPU ---
     cudaSetDevice(deviceIndex);  // avant toute construction CUDA (fix connu)
@@ -47,9 +51,6 @@ int runGpuSelfTest(int deviceIndex)
         &global, { device },
         argon2::ARGON2_ID, argon2::ARGON2_VERSION_13
     );
-
-    // Salt officiel BTC09 : "BTC09/pow/v1", pas de secret ni de donnees additionnelles
-    static const uint8_t salt[] = { 'B','T','C','0','9','/','p','o','w','/','v','1' };
 
     argon2::Argon2Params params(
         32,               // outLen

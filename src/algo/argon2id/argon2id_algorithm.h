@@ -23,6 +23,15 @@ public:
     std::vector<uint8_t> hashCpu(const std::vector<uint8_t>& input, uint64_t nonce, uint32_t tCost = 0, uint32_t mCostKib = 0) const override;
     size_t inputSize() const override;
     size_t gpuMemoryPerHashBytes() const override;
+    std::unique_ptr<GpuHasher> createGpuHasher(
+        int deviceIndex,
+        size_t batchSize,
+        uint32_t tCost,
+        uint32_t mCostKib
+    ) const override;
+    int gpuDeviceCount() const override;
+    void queryGpuMemory(int deviceIndex, size_t& freeBytes, size_t& totalBytes) const override;
+    std::vector<uint8_t> buildPassword(const std::vector<uint8_t>& input, uint64_t nonce) const override;
 
     // Accesseurs specifiques Argon2id, utilises par GpuMiner (le
     // pipeline GPU actuel reste base sur argon2-gpu, ces parametres lui

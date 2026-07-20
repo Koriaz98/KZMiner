@@ -67,6 +67,7 @@ namespace
         out << kBold << kCyan << " KZMiner " << KZMinerInfo::kVersion << " - " << KZMinerInfo::kTagline << " " << kReset << "\n";
         out << kBold << kCyan << " Wallet: " << data.walletAddress << " " << kReset << "\n";
         out << kBold << kCyan << " Pool: " << data.poolAddress << " " << kReset << "\n";
+        out << "\n";
         out << kCyan << kSep << "\n" << kReset;
 
         out

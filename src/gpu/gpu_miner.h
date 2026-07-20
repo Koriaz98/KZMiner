@@ -5,11 +5,12 @@
 #include <vector>
 
 class MiningSource;
+class Algorithm;
 
 class GpuMiner
 {
 public:
-    GpuMiner(MiningSource* source, int intensity, int workerOffset, int totalWorkers);
+    GpuMiner(MiningSource* source, Algorithm* algorithm, int intensity, int workerOffset, int totalWorkers);
 
     void launchWorkers();
     int getDeviceCount() const;
@@ -19,6 +20,7 @@ public:
 
 private:
     MiningSource* source_;
+    Algorithm* algorithm_;
     int intensity_;
     int workerOffset_;
     int totalWorkers_;

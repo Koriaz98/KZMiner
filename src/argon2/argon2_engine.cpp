@@ -80,27 +80,23 @@ namespace
 }
 
 std::vector<uint8_t> Argon2Engine::hash(
-    const std::vector<uint8_t>& header,
+    const std::vector<uint8_t>& password,
+    const std::vector<uint8_t>& salt,
     uint32_t t_cost,
     uint32_t m_cost_kib
 )
 {
     std::vector<uint8_t> output(32);
 
-    // Salt officiel BTC09 (core/pow.go: powSalt = "BTC09/pow/v1")
-    static const uint8_t salt[] = {
-        'B','T','C','0','9','/','p','o','w','/','v','1'
-    };
-
     argon2_context context;
     memset(&context, 0, sizeof(context));
 
     context.out       = output.data();
     context.outlen    = static_cast<uint32_t>(output.size());
-    context.pwd       = const_cast<uint8_t*>(header.data());
-    context.pwdlen    = static_cast<uint32_t>(header.size());
-    context.salt      = const_cast<uint8_t*>(salt);
-    context.saltlen   = sizeof(salt);
+    context.pwd       = const_cast<uint8_t*>(password.data());
+    context.pwdlen    = static_cast<uint32_t>(password.size());
+    context.salt      = const_cast<uint8_t*>(salt.data());
+    context.saltlen   = static_cast<uint32_t>(salt.size());
     context.secret    = nullptr;
     context.secretlen = 0;
     context.ad        = nullptr;

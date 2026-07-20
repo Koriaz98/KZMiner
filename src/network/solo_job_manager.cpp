@@ -99,7 +99,7 @@ bool SoloJobManager::refreshWork()
 
     if(isNewJob)
     {
-        std::string shortId = current_.job_id.substr(0, 16);
+        std::string shortId = current_.job_id.substr(0, 32);
         std::ostringstream oss;
         oss << sourceLabel() << " new job " << shortId
             << ", height " << current_.height

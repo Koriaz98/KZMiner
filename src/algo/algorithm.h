@@ -3,6 +3,8 @@
 #include <vector>
 #include <cstdint>
 #include <cstddef>
+#include <memory>
+class GpuHasher;
 
 // Interface commune a tous les algorithmes de minage supportes par
 // KZMiner. Chaque algorithme concret (Argon2id, KawPow, ...) implemente
@@ -38,6 +40,44 @@ public:
     // existant dans GpuMiner (deja parametrique, aucun changement
     // structurel necessaire de ce cote).
     virtual size_t gpuMemoryPerHashBytes() const = 0;
+    // Cree un hasheur GPU pour le device et la taille de batch donnes,
+    // avec les parametres memoire/iterations annonces par le job en
+    // cours (peuvent differer des valeurs par defaut de l'algorithme).
+    // L'appelant (GpuMiner) reste entierement decouple du backend
+    // concret (CUDA/argon2-gpu aujourd'hui, potentiellement autre
+    // chose pour un futur algorithme).
+    virtual std::unique_ptr<GpuHasher> createGpuHasher(
+        int deviceIndex,
+        size_t batchSize,
+        uint32_t tCost,
+        uint32_t mCostKib
+    ) const = 0;
+    // Nombre de GPU compatibles detectes pour cet algorithme (le
+    // mecanisme de detection depend du backend concret - CUDA/argon2-gpu
+    // aujourd'hui - mais GpuMiner n'a besoin de connaitre que ce
+    // resultat, jamais le mecanisme lui-meme).
+    virtual int gpuDeviceCount() const = 0;
+    // VRAM libre/totale (en octets) du device GPU donne, pour le calcul
+    // de batch-size dans GpuMiner. Le mecanisme de lecture depend du
+    // backend concret (cudaMemGetInfo aujourd'hui), jamais expose a
+    // l'appelant.
+    virtual void queryGpuMemory(
+        int deviceIndex,
+        size_t& freeBytes,
+        size_t& totalBytes
+    ) const = 0;
+    // Construit le mot de passe complet (nonce integre selon le schema
+    // propre a l'algorithme concret - position dans l'input pour BTC09,
+    // ou meme absence totale d'integration pour un schema invers comme
+    // celui de Blocknet) a partir de l'input brut et du nonce. Utilise
+    // en interne par hashCpu, et directement par GpuMiner pour preparer
+    // chaque emplacement d'un batch - la logique d'integration du nonce
+    // n'est ainsi ecrite qu'une seule fois, jamais dupliquee entre CPU
+    // et GPU.
+    virtual std::vector<uint8_t> buildPassword(
+        const std::vector<uint8_t>& input,
+        uint64_t nonce
+    ) const = 0;
 
     // --- Hooks pour algorithmes a dataset/kernel dynamique (KawPow) ---
     // No-op par defaut : les algorithmes simples comme Argon2id n'ont
