@@ -27,6 +27,8 @@ struct DashboardData
     std::string walletAddress;
     std::string poolAddress;
     std::string mode;
+    std::string workerName;
+    uint64_t uptimeSeconds = 0;
 };
 
 void printStatusTable(const DashboardData& data);

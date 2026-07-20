@@ -24,6 +24,10 @@ MinerConfig ConfigParser::parse(int argc, char **argv)
         {
             config.mode = argv[++i];
         }
+        else if(arg == "--algo" && i+1 < argc)
+        {
+            config.algo = argv[++i];
+        }
         else if(arg == "--cpu-threads" && i+1 < argc)
         {
             config.cpuThreads = std::atoi(argv[++i]);
@@ -76,6 +80,9 @@ void ConfigParser::printHelp()
     << "--mode <solo|pool>\n"
     << "    solo (default) : Open Mining Protocol v1, 100% of the block if found\n"
     << "    pool : third-party protocol, smoothed payout (PPLNS)\n\n"
+    << "--algo <argon2id-09c|argon2id-bnt>\n"
+    << "    argon2id-09c (default) : Bitcoin09 (09C), 64 MiB per hash\n"
+    << "    argon2id-bnt : Blocknet (BNT), 2 GiB per hash\n\n"
     << "--cpu\n"
     << "    Enable CPU mining\n\n"
     << "--gpu\n"

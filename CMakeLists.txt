@@ -68,10 +68,13 @@ add_executable(
     src/argon2/argon2_engine.cpp
     src/algo/argon2id/argon2id_algorithm.cpp
     src/algo/argon2id/argon2id_gpu_hasher.cpp
+    src/algo/blocknet_argon2id/blocknet_argon2id_algorithm.cpp
     src/network/work_client.cpp
     src/network/solo_job_manager.cpp
     src/network/pool_client.cpp
     src/network/pool_job_manager.cpp
+    src/network/blocknet_pool_client.cpp
+    src/network/blocknet_pool_job_manager.cpp
     src/devfee/devfee_source.cpp
     src/update_check.cpp
     src/monitor/system_monitor.cpp

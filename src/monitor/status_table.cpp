@@ -54,6 +54,18 @@ namespace
         return o.str();
     }
 
+    std::string fmtUptime(uint64_t totalSeconds)
+    {
+        uint64_t hours = totalSeconds / 3600;
+        uint64_t minutes = (totalSeconds % 3600) / 60;
+        uint64_t seconds = totalSeconds % 60;
+        std::ostringstream o;
+        o << std::setfill('0') << std::setw(2) << hours << ":"
+          << std::setfill('0') << std::setw(2) << minutes << ":"
+          << std::setfill('0') << std::setw(2) << seconds;
+        return o.str();
+    }
+
     const std::string kSep =
         "+-----------------------------------------------------------------------------------------------------------------+";
 
@@ -65,13 +77,16 @@ namespace
         std::ostringstream out;
 
         out << kBold << kCyan << " KZMiner " << KZMinerInfo::kVersion << " - " << KZMinerInfo::kTagline << " " << kReset << "\n";
+        out << "\n";
         out << kBold << kCyan << " Wallet: " << data.walletAddress << " " << kReset << "\n";
         out << kBold << kCyan << " Pool: " << data.poolAddress << " " << kReset << "\n";
+        out << kBold << kCyan << " Worker: " << data.workerName << " " << kReset << "\n";
+        out << kBold << kCyan << " ALGO: " << data.algoName << " " << kReset << "\n";
         out << "\n";
         out << kCyan << kSep << "\n" << kReset;
 
         out
-            << kBold << "HASHRATE" << kReset << " " << kGreen << data.totalHashrate << " H/s" << kReset
+            << kBold << "UPTIME" << kReset << " " << kYellow << fmtUptime(data.uptimeSeconds) << kReset
             << "  |  " << kBold << "SHARES" << kReset << " " << kGreen << data.shares << kReset
             << " (" << kGreen << data.accepted << " accepted" << kReset
             << ", " << kRed << data.rejected << " rejected" << kReset << ")";
@@ -92,6 +107,7 @@ namespace
             << "  |  " << kBold << "DIFFICULTY" << kReset << " " << kYellow << data.difficulty << kReset
             << "  |  " << kBold << "HEIGHT" << kReset << " " << kYellow << data.height << kReset
             << "\n";
+        out << "\n";
 
         int activeGpus = static_cast<int>(data.gpuRows.size());
 
@@ -101,7 +117,7 @@ namespace
             << "  |  " << kBold << "CPU TEMP" << kReset << " " << (cpu.tempAvailable ? fmtTemp(cpu.tempCelsius) : std::string("N/A"))
             << "  |  " << kBold << "CPU USAGE" << kReset << " " << (cpu.usageAvailable ? fmtPercent(cpu.usagePercent) : std::string("N/A"))
             << "  |  " << kBold << "ACTIVE" << kReset << " " << (data.cpuThreads > 0 ? 1 : 0) << " CPU + " << activeGpus << " GPU"
-            << "  |  " << kBold << "ALGO" << kReset << " " << data.algoName
+            << "  |  " << kBold << "STATUS" << kReset << " " << kGreen << "MINING" << kReset
             << "\n";
 
         out << kCyan << kSep << "\n" << kReset;
@@ -118,7 +134,7 @@ namespace
                 << kBold << " CPU " << kReset << "| "
                 << kBlue << cpuNamePadded << kReset << " | "
                 << std::left << std::setw(10) << (std::to_string(data.cpuThreads) + " threads")
-                << " | " << std::left << std::setw(12) << (std::to_string(data.cpuHashrate) + " H/s")
+                << " | " << kGreen << std::left << std::setw(12) << (std::to_string(data.cpuHashrate) + " H/s") << kReset
                 << " | temp " << std::left << std::setw(7) << (cpu.tempAvailable ? fmtTemp(cpu.tempCelsius) : std::string("N/A"))
                 << " | usage " << (cpu.usageAvailable ? fmtPercent(cpu.usagePercent) : std::string("N/A"))
                 << "\n";
@@ -154,7 +170,7 @@ namespace
                 out
                     << " " << std::left << std::setw(4) << g.index << "| "
                     << kBlue << [&]{ std::string n = g.name.substr(0, 28); n.resize(28, ' '); return n; }() << kReset << " | "
-                    << std::left << std::setw(13) << (std::to_string(row.hashrate) + " H/s") << " | "
+                    << kGreen << std::left << std::setw(13) << (std::to_string(row.hashrate) + " H/s") << kReset << " | "
                     << tempPadded << "| "
                     << std::left << std::setw(7) << (std::to_string(g.utilPercent) + "%") << "| "
                     << std::left << std::setw(20) << vram.str() << "| "
@@ -173,12 +189,12 @@ namespace
         if(cpu.powerAvailable) totalKnownPower += cpu.powerWatts;
 
         out
-            << kBold << "TOTAL" << kReset
+            << kBold << "TOTAL HASHRATE" << kReset
             << " " << kGreen << data.totalHashrate << " H/s" << kReset
-            << "  |  POWER (GPU) " << static_cast<int>(totalGpuPower) << " W"
-            << "  | POWER (CPU) " << (cpu.powerAvailable ? (std::to_string(static_cast<int>(cpu.powerWatts)) + "W") : std::string("N/A"))
+            << "  |  POWER (GPU) " << kYellow << static_cast<int>(totalGpuPower) << "W" << kReset
+            << "  | POWER (CPU) " << kYellow << (cpu.powerAvailable ? (std::to_string(static_cast<int>(cpu.powerWatts)) + "W") : std::string("N/A")) << kReset
             << "  |  TOTAL AT WALL (CPU + GPU + 20%) " << (u8"\u2248")
-            << static_cast<int>(totalKnownPower * (1.0 + kAtWallOverheadFraction)) << "W"
+            << kYellow << static_cast<int>(totalKnownPower * (1.0 + kAtWallOverheadFraction)) << "W" << kReset
             << "\n";
 
         out << kCyan << kSep << kReset << "\n";

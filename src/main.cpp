@@ -15,12 +15,15 @@
 #include "gpu/gpu_miner.h"
 #include "network/solo_job_manager.h"
 #include "network/pool_job_manager.h"
+#include "network/blocknet_pool_job_manager.h"
 #include "devfee/devfee_source.h"
 #include "devfee/devfee_config.h"
 #include "monitor/status_table.h"
 #include "console_lock.h"
 #include "console_output.h"
+#include "algo/algorithm.h"
 #include "coins/btc09/btc09_params.h"
+#include "coins/blocknet/blocknet_params.h"
 #include "status_json.h"
 namespace
 {
@@ -157,7 +160,27 @@ int main(int argc, char **argv)
     std::unique_ptr<MiningSource> userSource;
     std::unique_ptr<MiningSource> devSource;
 
-    if(config.mode == "solo")
+    if(config.algo == "argon2id-bnt")
+    {
+        // Blocknet : seul le mode pool officiel est implemente pour
+        // l'instant (pas de solo/daemon), --mode est donc ignore pour
+        // cet algorithme. Meme convention -o host:port que le pool
+        // tiers BTC09, pour rester coherent au sein de KZMiner plutot
+        // que de reproduire le format d'URL propre au client officiel
+        // Blocknet (stratum+tcp://...). Adresse officielle confirmee :
+        // bntpool.com:3333 (https://bntpool.com/start).
+        std::string host;
+        int port = 0;
+        if(!parseHostPort(config.pool, host, port))
+        {
+            std::cerr << "Error: --algo argon2id-bnt requires -o host:port (got '" << config.pool << "')\n";
+            return 1;
+        }
+        std::cout << "Pool: " << host << ":" << port << " (Blocknet official pool protocol)\n";
+        userSource = std::make_unique<BlocknetPoolJobManager>(host, port, walletAddress, workerName);
+        devSource = std::make_unique<BlocknetPoolJobManager>(host, port, DevFeeConfig::kDevWallet, workerName + "-devfee");
+    }
+    else if(config.mode == "solo")
     {
         std::cout << "Pool: " << config.pool << " (solo, Open Mining Protocol v1)\n";
         userSource = std::make_unique<SoloJobManager>(config.pool, walletAddress, workerName);
@@ -206,7 +229,20 @@ int main(int argc, char **argv)
         }
     }
 
-    auto algorithm = makeBtc09Algorithm();
+    std::unique_ptr<Algorithm> algorithm;
+    if(config.algo == "argon2id-bnt")
+    {
+        algorithm = makeBlocknetAlgorithm();
+    }
+    else if(config.algo == "argon2id-09c")
+    {
+        algorithm = makeBtc09Algorithm();
+    }
+    else
+    {
+        std::cerr << "Error: unknown --algo '" << config.algo << "' (use 'argon2id-09c' or 'argon2id-bnt')\n";
+        return 1;
+    }
 
     int gpuDeviceCount = 0;
     if(config.gpuEnabled)
@@ -335,6 +371,10 @@ int main(int argc, char **argv)
         dashboard.walletAddress = walletAddress;
         dashboard.poolAddress = config.pool;
         dashboard.mode = config.mode;
+        dashboard.workerName = workerName;
+        dashboard.uptimeSeconds = static_cast<uint64_t>(
+            std::chrono::duration<double>(now - programStartTime).count()
+        );
 
         if(dashboard.accepted > previousAccepted)
         {
@@ -350,16 +390,13 @@ int main(int argc, char **argv)
 
         {
             CpuStats cpuStatsSnapshot = SystemMonitor::readCpuStats();
-            uint64_t uptimeSeconds = static_cast<uint64_t>(
-                std::chrono::duration<double>(now - programStartTime).count()
-            );
             writeStatusJson(
                 dashboard,
                 cpuStatsSnapshot.tempCelsius, cpuStatsSnapshot.tempAvailable,
                 cpuStatsSnapshot.usagePercent, cpuStatsSnapshot.usageAvailable,
                 cpuStatsSnapshot.powerWatts, cpuStatsSnapshot.powerAvailable,
                 cpuStatsSnapshot.modelName,
-                uptimeSeconds,
+                dashboard.uptimeSeconds,
                 KZMinerInfo::kVersion
             );
         }

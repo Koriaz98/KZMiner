@@ -7,6 +7,7 @@ struct MinerConfig
     std::string wallet;
     std::string password = "x";
     std::string mode = "solo";
+    std::string algo = "argon2id-09c";
     std::string workerName;
     int cpuThreads = 0;
     bool cpuEnabled = false;

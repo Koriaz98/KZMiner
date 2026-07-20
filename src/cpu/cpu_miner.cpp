@@ -27,7 +27,7 @@ void CPUMiner::worker(int cpuId)
     }
 
     int globalId = workerOffset_ + cpuId;
-    std::vector<uint8_t> lastHeader;
+    std::string lastJobId;
     uint64_t nonce = 0;
     uint64_t rangeStart = 0;
     uint64_t rangeEnd = 0;
@@ -41,9 +41,16 @@ void CPUMiner::worker(int cpuId)
             continue;
         }
 
-        if(job.header != lastHeader)
+        if(job.job_id != lastJobId)
         {
-            lastHeader = job.header;
+            // Detection du changement de job basee sur job_id (garanti
+            // unique par construction), pas sur les octets de l'entete -
+            // chez certains coins (Blocknet notamment), l'entete/salt
+            // peut rester identique entre plusieurs jobs successifs
+            // distincts (nonce_start/nonce_end differents malgre tout),
+            // ce qui ferait echouer une detection basee uniquement sur
+            // les octets et ferait perdurer une plage de nonce perimee.
+            lastJobId = job.job_id;
             if(job.nonce_end != 0)
             {
                 uint64_t span = job.nonce_end - job.nonce_start;

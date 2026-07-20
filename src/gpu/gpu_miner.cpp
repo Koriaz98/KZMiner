@@ -115,7 +115,7 @@ void GpuMiner::worker(int deviceIndex, int globalId)
             deviceIndex, batchSize, job.argon_time, job.argon_mem_kib
         );
 
-        std::vector<uint8_t> lastHeader;
+        std::string lastJobId;
         uint64_t rangeStart = 0, rangeEnd = 0, nonce = 0;
         std::vector<uint8_t> hashBuf(32);
 
@@ -129,9 +129,18 @@ void GpuMiner::worker(int deviceIndex, int globalId)
                 continue;
             }
 
-            if(job.header != lastHeader)
+            if(job.job_id != lastJobId)
             {
-                lastHeader = job.header;
+                // Detection du changement de job basee sur job_id
+                // (garanti unique par construction), pas sur les
+                // octets de l'entete - chez certains coins (Blocknet
+                // notamment), l'entete/salt peut rester identique
+                // entre plusieurs jobs successifs distincts
+                // (nonce_start/nonce_end differents malgre tout), ce
+                // qui ferait echouer une detection basee uniquement
+                // sur les octets et ferait perdurer une plage de
+                // nonce perimee.
+                lastJobId = job.job_id;
 
                 if(job.nonce_end != 0)
                 {
