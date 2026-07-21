@@ -1,4 +1,5 @@
 #include "blocknet_argon2id_algorithm.h"
+#include "blocknet_gpu_hasher.h"
 #include "../../argon2/argon2_engine.h"
 #include <stdexcept>
 
@@ -63,29 +64,27 @@ size_t BlocknetArgon2idAlgorithm::gpuMemoryPerHashBytes() const
 }
 
 std::unique_ptr<GpuHasher> BlocknetArgon2idAlgorithm::createGpuHasher(
-    int /*deviceIndex*/,
-    size_t /*batchSize*/,
-    uint32_t /*tCost*/,
-    uint32_t /*mCostKib*/
+    int deviceIndex,
+    size_t batchSize,
+    uint32_t tCost,
+    uint32_t mCostKib
 ) const
 {
-    throw std::runtime_error("Blocknet: GPU mining not yet implemented in KZMiner, use --cpu only");
+    uint32_t effectiveTCost = (tCost != 0) ? tCost : tCost_;
+    uint32_t effectiveMCostKib = (mCostKib != 0) ? mCostKib : mCostKib_;
+    return std::make_unique<BlocknetGpuHasher>(deviceIndex, batchSize, effectiveTCost, effectiveMCostKib);
 }
 
 int BlocknetArgon2idAlgorithm::gpuDeviceCount() const
 {
-    // GPU pas encore implemente pour Blocknet (voir feuille de route) -
-    // annoncer 0 device fait que --gpu n'a simplement aucun effet,
-    // sans code special necessaire ailleurs dans le projet.
-    return 0;
+    return blocknetGpuDeviceCount();
 }
 
 void BlocknetArgon2idAlgorithm::queryGpuMemory(
-    int /*deviceIndex*/,
+    int deviceIndex,
     size_t& freeBytes,
     size_t& totalBytes
 ) const
 {
-    freeBytes = 0;
-    totalBytes = 0;
+    blocknetGpuMemoryInfo(deviceIndex, freeBytes, totalBytes);
 }

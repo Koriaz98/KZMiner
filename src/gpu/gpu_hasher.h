@@ -29,4 +29,12 @@ public:
 
     // Taille du batch pour laquelle ce hasheur a ete construit.
     virtual size_t batchSize() const = 0;
+
+    // Definit le sel utilise pour le batch courant. No-op par defaut :
+    // les algorithmes a sel fixe (BTC09) n'ont pas besoin de le
+    // redefinir. Les algorithmes a sel variable par job (Blocknet)
+    // redefinissent cette methode - GpuMiner l'appelle de facon
+    // generique a chaque changement de job, sans avoir besoin de
+    // savoir si l'algorithme courant en a reellement besoin.
+    virtual void setSalt(const uint8_t* /*data*/, size_t /*len*/) {}
 };

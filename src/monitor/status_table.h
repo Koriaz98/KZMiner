@@ -7,12 +7,12 @@
 struct GpuRow
 {
     GpuStats stats;
-    uint64_t hashrate = 0;
+    double hashrate = 0.0;
 };
 
 struct DashboardData
 {
-    uint64_t totalHashrate = 0;
+    double totalHashrate = 0.0;
     uint64_t shares = 0;
     uint64_t accepted = 0;
     uint64_t rejected = 0;
@@ -20,7 +20,7 @@ struct DashboardData
     uint64_t height = 0;
 
     int cpuThreads = 0;
-    uint64_t cpuHashrate = 0;
+    double cpuHashrate = 0.0;
 
     std::vector<GpuRow> gpuRows;
     std::string algoName;

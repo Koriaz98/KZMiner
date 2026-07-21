@@ -273,17 +273,23 @@ int main(int argc, char **argv)
     }
 
     std::vector<uint64_t> previousGpuHashes(gpuDeviceCount, 0);
+    std::vector<std::chrono::steady_clock::time_point> lastGpuChangeTime(
+        gpuDeviceCount, std::chrono::steady_clock::now()
+    );
     uint64_t previousCpuHashes = 0;
+    auto lastCpuChangeTime = std::chrono::steady_clock::now();
     uint64_t previousAccepted = 0;
 
-    auto lastRateTime = std::chrono::steady_clock::now();
     auto programStartTime = std::chrono::steady_clock::now();
-    bool firstIteration = true;
 
-    // dernieres valeurs connues, reaffichees telles quelles entre deux
-    // recalculs de hashrate (toutes les 10s), pour rafraichir le
-    // panneau plus souvent (toutes les 2s) sans rendre le chiffre de
-    // hashrate instable/bruite sur une trop courte fenetre.
+    // dernieres valeurs connues, reaffichees telles quelles tant que
+    // le nombre de hachages n'a pas change, pour rafraichir le
+    // panneau souvent (toutes les 2s) sans rendre le chiffre de
+    // hashrate instable/bruite. Le taux n'est recalcule QUE lorsque
+    // le compteur de hachages progresse reellement (pas sur une
+    // fenetre de temps fixe) - un algorithme lent comme Blocknet peut
+    // mettre plus de 10s a terminer un seul lot, ce qui ferait sinon
+    // afficher 0 H/s a tort malgre un vrai travail en cours.
     DashboardData lastDashboard;
 
     while(true)
@@ -291,65 +297,45 @@ int main(int argc, char **argv)
         std::this_thread::sleep_for(std::chrono::seconds(2));
 
         auto now = std::chrono::steady_clock::now();
-        double sinceLastRate = std::chrono::duration<double>(now - lastRateTime).count();
-
-        bool recomputeRate = firstIteration || sinceLastRate >= 10.0;
 
         uint64_t shares = 0;
-        uint64_t cpuRate = lastDashboard.cpuHashrate;
+        double cpuRate = lastDashboard.cpuHashrate;
         std::vector<GpuRow> gpuRows = lastDashboard.gpuRows;
 
-        if(recomputeRate)
+        if(cpuMiner)
         {
-            double elapsed = sinceLastRate;
-            if(elapsed < 0.1) elapsed = 0.1;
-
-            uint64_t currCpu = 0;
-            if(cpuMiner)
+            uint64_t currCpu = cpuMiner->getHashes();
+            shares += cpuMiner->getShares();
+            if(currCpu != previousCpuHashes)
             {
-                currCpu = cpuMiner->getHashes();
-                shares += cpuMiner->getShares();
+                double elapsed = std::chrono::duration<double>(now - lastCpuChangeTime).count();
+                if(elapsed < 0.1) elapsed = 0.1;
+                cpuRate = static_cast<double>(currCpu - previousCpuHashes) / elapsed;
+                previousCpuHashes = currCpu;
+                lastCpuChangeTime = now;
             }
-            cpuRate = static_cast<uint64_t>((currCpu - previousCpuHashes) / elapsed);
-            previousCpuHashes = currCpu;
-
-            gpuRows.clear();
-            if(gpuMiner)
-            {
-                shares += gpuMiner->getShares();
-                std::vector<GpuStats> stats = SystemMonitor::readGpuStats();
-                for(const auto &s : stats)
-                {
-                    uint64_t curr = gpuMiner->getDeviceHashes(s.index);
-                    uint64_t prev = (s.index < static_cast<int>(previousGpuHashes.size()))
-                        ? previousGpuHashes[s.index] : 0;
-                    GpuRow row;
-                    row.stats = s;
-                    row.hashrate = static_cast<uint64_t>((curr - prev) / elapsed);
-                    gpuRows.push_back(row);
-                    if(s.index < static_cast<int>(previousGpuHashes.size()))
-                    {
-                        previousGpuHashes[s.index] = curr;
-                    }
-                }
-            }
-
-            lastRateTime = now;
-            firstIteration = false;
         }
-        else
+
+        if(gpuMiner)
         {
-            // Entre deux recalculs : on garde le hashrate/GPU-hashrate
-            // stables, mais on relit quand meme les stats instantanees
-            // (temp/util/VRAM/fan/power) pour que le panneau "respire".
-            if(cpuMiner) shares += cpuMiner->getShares();
-            if(gpuMiner)
+            shares += gpuMiner->getShares();
+            std::vector<GpuStats> stats = SystemMonitor::readGpuStats();
+            if(gpuRows.size() != stats.size()) gpuRows.resize(stats.size());
+            for(size_t i = 0; i < stats.size(); i++)
             {
-                shares += gpuMiner->getShares();
-                std::vector<GpuStats> stats = SystemMonitor::readGpuStats();
-                for(size_t i = 0; i < gpuRows.size() && i < stats.size(); i++)
+                int idx = stats[i].index;
+                gpuRows[i].stats = stats[i];
+
+                uint64_t curr = gpuMiner->getDeviceHashes(idx);
+                uint64_t prevHash = (idx < static_cast<int>(previousGpuHashes.size()))
+                    ? previousGpuHashes[idx] : 0;
+                if(curr != prevHash && idx < static_cast<int>(lastGpuChangeTime.size()))
                 {
-                    gpuRows[i].stats = stats[i];
+                    double elapsed = std::chrono::duration<double>(now - lastGpuChangeTime[idx]).count();
+                    if(elapsed < 0.1) elapsed = 0.1;
+                    gpuRows[i].hashrate = static_cast<double>(curr - prevHash) / elapsed;
+                    previousGpuHashes[idx] = curr;
+                    lastGpuChangeTime[idx] = now;
                 }
             }
         }

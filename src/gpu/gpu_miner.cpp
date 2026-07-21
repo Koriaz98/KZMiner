@@ -141,6 +141,9 @@ void GpuMiner::worker(int deviceIndex, int globalId)
                 // sur les octets et ferait perdurer une plage de
                 // nonce perimee.
                 lastJobId = job.job_id;
+                // No-op pour les algorithmes a sel fixe (BTC09) - reel
+                // pour ceux a sel variable par job (Blocknet).
+                hasher->setSalt(job.header.data(), job.header.size());
 
                 if(job.nonce_end != 0)
                 {

@@ -69,6 +69,7 @@ add_executable(
     src/algo/argon2id/argon2id_algorithm.cpp
     src/algo/argon2id/argon2id_gpu_hasher.cpp
     src/algo/blocknet_argon2id/blocknet_argon2id_algorithm.cpp
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
     src/network/work_client.cpp
     src/network/solo_job_manager.cpp
     src/network/pool_client.cpp
@@ -105,4 +106,17 @@ target_link_libraries(
     ${ARGON2_DUAL_DIR}/libargon2_avx2_renamed.a
     ${ARGON2_DUAL_DIR}/libargon2_ref.a
     argon2-cuda-vendored
+)
+
+add_executable(
+    blocknet-gpu-selftest
+    src/argon2/argon2_engine.cpp
+    src/algo/blocknet_argon2id/blocknet_argon2id_algorithm.cpp
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
+    src/algo/blocknet_argon2id/blocknet_gpu_selftest.cpp
+)
+target_link_libraries(
+    blocknet-gpu-selftest
+    ${ARGON2_DUAL_DIR}/libargon2_avx2_renamed.a
+    ${ARGON2_DUAL_DIR}/libargon2_ref.a
 )
