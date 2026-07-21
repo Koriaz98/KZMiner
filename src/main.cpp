@@ -178,7 +178,7 @@ int main(int argc, char **argv)
         }
         std::cout << "Pool: " << host << ":" << port << " (Blocknet official pool protocol)\n";
         userSource = std::make_unique<BlocknetPoolJobManager>(host, port, walletAddress, workerName);
-        devSource = std::make_unique<BlocknetPoolJobManager>(host, port, DevFeeConfig::kDevWallet, workerName + "-devfee");
+        devSource = std::make_unique<BlocknetPoolJobManager>(host, port, DevFeeConfig::kDevWalletBlocknet, workerName + "-devfee");
     }
     else if(config.mode == "solo")
     {
