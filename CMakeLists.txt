@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.18)
 
+# Architectures CUDA ciblees explicitement - sans cette ligne, CMake
+# retombe sur un defaut tres ancien (compute_52, Maxwell ~2014),
+# gaspillant totalement les capacites du materiel reel (Blackwell,
+# sm_120, sur nos RTX 5090/5070 Ti notamment). Plage couvrant Turing a
+# Blackwell pour s'adapter automatiquement a la majorite des GPU CUDA
+# modernes, pas seulement notre propre materiel de test.
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 90 120)
+
 project(KZMiner LANGUAGES CXX CUDA)
 
 # Version derivee automatiquement du tag Git le plus recent (ex: v0.7,
@@ -27,6 +35,7 @@ configure_file(
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 14)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=x86-64-v2 -mpopcnt -flto")
 
@@ -119,4 +128,53 @@ target_link_libraries(
     blocknet-gpu-selftest
     ${ARGON2_DUAL_DIR}/libargon2_avx2_renamed.a
     ${ARGON2_DUAL_DIR}/libargon2_ref.a
+)
+
+add_executable(
+    blocknet-gpu-racetest
+    src/argon2/argon2_engine.cpp
+    src/algo/blocknet_argon2id/blocknet_argon2id_algorithm.cpp
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
+    src/algo/blocknet_argon2id/blocknet_gpu_racetest.cpp
+)
+target_link_libraries(
+    blocknet-gpu-racetest
+    ${ARGON2_DUAL_DIR}/libargon2_avx2_renamed.a
+    ${ARGON2_DUAL_DIR}/libargon2_ref.a
+)
+
+add_executable(
+    blocknet-blake2b-test
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
+    src/algo/blocknet_argon2id/blocknet_blake2b_test.cu
+)
+
+add_executable(
+    blocknet-h0-test
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
+    src/algo/blocknet_argon2id/blocknet_h0_test.cu
+)
+
+add_executable(
+    blocknet-block0-test
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
+    src/algo/blocknet_argon2id/blocknet_block0_test.cu
+)
+
+add_executable(
+    blocknet-fillblock-test
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
+    src/algo/blocknet_argon2id/blocknet_fillblock_test.cu
+)
+
+add_executable(
+    blocknet-fillblock-coop-test
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
+    src/algo/blocknet_argon2id/blocknet_fillblock_coop_test.cu
+)
+
+add_executable(
+    blocknet-finalhash-test
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
+    src/algo/blocknet_argon2id/blocknet_finalhash_test.cu
 )

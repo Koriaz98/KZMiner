@@ -321,21 +321,31 @@ int main(int argc, char **argv)
             shares += gpuMiner->getShares();
             std::vector<GpuStats> stats = SystemMonitor::readGpuStats();
             if(gpuRows.size() != stats.size()) gpuRows.resize(stats.size());
+            // On utilise la POSITION dans la liste (i), pas l'etiquette
+            // nvidia-smi (stats[i].index), pour retrouver le hashrate
+            // interne. Ces deux numerotations divergent des qu'un GPU
+            // est absent/casse (nvidia-smi "saute" son numero, alors
+            // que CUDA renumerote sans trou) ou que
+            // CUDA_VISIBLE_DEVICES restreint les cartes visibles -
+            // situations courantes en minage multi-GPU. Comme KZMiner
+            // force CUDA_DEVICE_ORDER=PCI_BUS_ID en interne (voir plus
+            // haut), l'ORDRE de la liste nvidia-smi correspond bien a
+            // l'ordre interne CUDA, seule l'ETIQUETTE numerique differe -
+            // d'ou l'utilisation de la position plutot que l'etiquette.
             for(size_t i = 0; i < stats.size(); i++)
             {
-                int idx = stats[i].index;
                 gpuRows[i].stats = stats[i];
 
-                uint64_t curr = gpuMiner->getDeviceHashes(idx);
-                uint64_t prevHash = (idx < static_cast<int>(previousGpuHashes.size()))
-                    ? previousGpuHashes[idx] : 0;
-                if(curr != prevHash && idx < static_cast<int>(lastGpuChangeTime.size()))
+                uint64_t curr = gpuMiner->getDeviceHashes(static_cast<int>(i));
+                uint64_t prevHash = (i < previousGpuHashes.size())
+                    ? previousGpuHashes[i] : 0;
+                if(curr != prevHash && i < lastGpuChangeTime.size())
                 {
-                    double elapsed = std::chrono::duration<double>(now - lastGpuChangeTime[idx]).count();
+                    double elapsed = std::chrono::duration<double>(now - lastGpuChangeTime[i]).count();
                     if(elapsed < 0.1) elapsed = 0.1;
                     gpuRows[i].hashrate = static_cast<double>(curr - prevHash) / elapsed;
-                    previousGpuHashes[idx] = curr;
-                    lastGpuChangeTime[idx] = now;
+                    previousGpuHashes[i] = curr;
+                    lastGpuChangeTime[i] = now;
                 }
             }
         }

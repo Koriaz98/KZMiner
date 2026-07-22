@@ -126,7 +126,20 @@ __device__ void blake2bSimple(uint8_t* out, uint32_t outlen, const uint8_t* in, 
 // initiaux, mais ecrite de facon generique).
 __device__ void blake2bLong(uint8_t* out, uint32_t outlen, const uint8_t* in, uint32_t inlen)
 {
-    uint8_t prefixed[8 + 92 + 8]; // 4(outlen) + max(72 pour blocs initiaux)
+    // BUG CRITIQUE CORRIGE (trouve via diagnostic approfondi le
+    // 22 juillet) : ce tampon etait dimensionne pour seulement 108
+    // octets (suffisant pour H0/generation des blocs initiaux), mais
+    // cette fonction est AUSSI appelee pour le hash final avec une
+    // entree de 1024 octets (le dernier bloc complet) - soit 1028
+    // octets necessaires avec le prefixe de 4 octets. Le debordement
+    // resultant (~920 octets au-dela du tableau, dans la pile du
+    // thread) n'etait detecte par AUCUN outil de diagnostic (memoire
+    // "possedee" par le thread, pas un acces illegal a proprement
+    // parler), et son effet variait selon l'agencement de pile propre
+    // a chaque architecture cible - explique pourquoi le calcul
+    // semblait correct avec l'ancienne cible de compilation
+    // (compute_52) mais pas avec la bonne (sm_120, Blackwell).
+    uint8_t prefixed[4 + 1024];
     uint8_t outlenBytes[4];
     outlenBytes[0] = static_cast<uint8_t>(outlen & 0xff);
     outlenBytes[1] = static_cast<uint8_t>((outlen >> 8) & 0xff);
@@ -260,14 +273,6 @@ __device__ void nextAddresses(uint64_t* addressBlock, uint64_t* inputBlock)
 // que le materiel CUDA planifie de toute facon par "warp" - 75% de la
 // capacite de calcul etait gaspillee. Ici, 4 hachages independants se
 // partagent un meme warp complet, sans rien gaspiller.
-// __launch_bounds__(threads_par_bloc, blocs_min_par_SM) : indique au
-// compilateur de contraindre l'usage de registres par thread pour
-// permettre au moins ce nombre de blocs residents simultanement par
-// multiprocesseur de flux (SM) - chaque bloc n'utilisant que 8
-// threads (voir hashesPerBlock), plusieurs peuvent tenir sur un meme
-// SM si le compilateur limite suffisamment les registres, permettant
-// un recouvrement de la latence memoire entre blocs residents.
-__launch_bounds__(8, 16)
 __global__ void blocknetArgon2idKernel(
     const uint8_t* __restrict__ salt,
     uint32_t saltLen,
@@ -282,9 +287,9 @@ __global__ void blocknetArgon2idKernel(
     // la configuration de lancement reelle (blockDim.x / 8), plutot
     // que fige en dur - permet de varier ce paramtre (voir
     // computeBatch()) sans jamais desynchroniser ce calcul d'indice.
-    unsigned int hashesPerBlock = blockDim.x / 8;
-    unsigned int hashSlot = threadIdx.x / 8;
-    unsigned int tid = threadIdx.x % 8;         // 0..7, role cooperatif
+    unsigned int hashesPerBlock = blockDim.x / 32;
+    unsigned int hashSlot = threadIdx.x / 32;
+    unsigned int tid = threadIdx.x % 32;        // 0..31, role cooperatif
     unsigned int hashIdx = blockIdx.x * hashesPerBlock + hashSlot;
     if(hashIdx >= activeHashes) return;
 
@@ -347,7 +352,7 @@ __global__ void blocknetArgon2idKernel(
         inputBlock[hashSlot][0] = 0; inputBlock[hashSlot][1] = 0;
         inputBlock[hashSlot][3] = mCostKib; inputBlock[hashSlot][4] = 1; inputBlock[hashSlot][5] = 2;
     }
-    __syncthreads();
+    __syncwarp(0xFFFFFFFFU);
 
     const uint32_t segmentLength = mCostKib / 4;
 
@@ -367,7 +372,7 @@ __global__ void blocknetArgon2idKernel(
             sCurrOffset[hashSlot] = slice * segmentLength + startingIndex;
             sPrevOffset[hashSlot] = (sCurrOffset[hashSlot] == 0) ? (mCostKib - 1) : (sCurrOffset[hashSlot] - 1);
         }
-        __syncthreads();
+        __syncwarp(0xFFFFFFFFU);
 
         for(uint32_t i = startingIndex; i < segmentLength; i++)
         {
@@ -400,70 +405,103 @@ __global__ void blocknetArgon2idKernel(
                     ((static_cast<uint64_t>(referenceAreaSize) * relativePosition) >> 32);
                 sRefIndex[hashSlot] = static_cast<uint32_t>(relativePosition) % mCostKib;
             }
-            __syncthreads();
+            __syncwarp(0xFFFFFFFFU);
 
-            // --- fillBlock cooperatif (8 threads, par hash-slot) ---
+            // --- fillBlock cooperatif (32 threads = 1 warp complet par
+            // hachage). Chacun des 8 groupes independants de 16 mots
+            // contient en realite 4 sous-calculs G independants entre
+            // eux (colonnes), puis 4 autres sous-calculs independants
+            // (diagonales, dependant des resultats des colonnes) - soit
+            // 8 x 4 = 32 operations veritablement paralleles par phase,
+            // pas seulement 8 comme dans la version precedente (qui
+            // traitait les 4+4 G d'un groupe sequentiellement par un
+            // seul thread). Correction majeure identifiee en comparant
+            // au noyau reel de seine.
             const uint64_t* ref = memory + static_cast<size_t>(sRefIndex[hashSlot]) * 128;
             const uint64_t* prev = memory + static_cast<size_t>(sPrevOffset[hashSlot]) * 128;
-            for(int k = tid * 16; k < tid * 16 + 16; k++)
-            {
-                blockR[hashSlot][k] = ref[k] ^ prev[k];
-                blockTmp[hashSlot][k] = blockR[hashSlot][k];
-            }
-            __syncthreads();
+            blockR[hashSlot][tid]      = ref[tid]      ^ prev[tid];
+            blockR[hashSlot][tid+32]   = ref[tid+32]   ^ prev[tid+32];
+            blockR[hashSlot][tid+64]   = ref[tid+64]   ^ prev[tid+64];
+            blockR[hashSlot][tid+96]   = ref[tid+96]   ^ prev[tid+96];
+            blockTmp[hashSlot][tid]    = blockR[hashSlot][tid];
+            blockTmp[hashSlot][tid+32] = blockR[hashSlot][tid+32];
+            blockTmp[hashSlot][tid+64] = blockR[hashSlot][tid+64];
+            blockTmp[hashSlot][tid+96] = blockR[hashSlot][tid+96];
+            __syncwarp(0xFFFFFFFFU);
 
+            // Phase "colonnes" (8 groupes contigus de 16 mots) - sous-ronde colonnes
             {
-                uint64_t* v = blockR[hashSlot] + 16 * tid;
-                BLAMKA_G(v[0], v[4], v[8], v[12]);
-                BLAMKA_G(v[1], v[5], v[9], v[13]);
-                BLAMKA_G(v[2], v[6], v[10], v[14]);
-                BLAMKA_G(v[3], v[7], v[11], v[15]);
-                BLAMKA_G(v[0], v[5], v[10], v[15]);
-                BLAMKA_G(v[1], v[6], v[11], v[12]);
-                BLAMKA_G(v[2], v[7], v[8], v[13]);
-                BLAMKA_G(v[3], v[4], v[9], v[14]);
+                unsigned int group = tid / 4;
+                unsigned int subop = tid % 4;
+                uint64_t* v = blockR[hashSlot] + 16 * group;
+                if(subop == 0)      { BLAMKA_G(v[0], v[4], v[8],  v[12]); }
+                else if(subop == 1) { BLAMKA_G(v[1], v[5], v[9],  v[13]); }
+                else if(subop == 2) { BLAMKA_G(v[2], v[6], v[10], v[14]); }
+                else                { BLAMKA_G(v[3], v[7], v[11], v[15]); }
             }
-            __syncthreads();
-
+            __syncwarp(0xFFFFFFFFU);
+            // Phase "colonnes" - sous-ronde diagonales (depend des colonnes ci-dessus)
             {
+                unsigned int group = tid / 4;
+                unsigned int subop = tid % 4;
+                uint64_t* v = blockR[hashSlot] + 16 * group;
+                if(subop == 0)      { BLAMKA_G(v[0], v[5], v[10], v[15]); }
+                else if(subop == 1) { BLAMKA_G(v[1], v[6], v[11], v[12]); }
+                else if(subop == 2) { BLAMKA_G(v[2], v[7], v[8],  v[13]); }
+                else                { BLAMKA_G(v[3], v[4], v[9],  v[14]); }
+            }
+            __syncwarp(0xFFFFFFFFU);
+
+            // Phase "lignes" (motif 2*i non contigu) - sous-ronde colonnes
+            {
+                unsigned int group = tid / 4;
+                unsigned int subop = tid % 4;
                 uint64_t* br = blockR[hashSlot];
-                int i2 = tid;
-                uint64_t a = br[2*i2], b = br[2*i2+1];
-                uint64_t c = br[2*i2+16], d = br[2*i2+17];
-                uint64_t e = br[2*i2+32], f = br[2*i2+33];
-                uint64_t g = br[2*i2+48], hh = br[2*i2+49];
-                uint64_t ii = br[2*i2+64], jj = br[2*i2+65];
-                uint64_t kk = br[2*i2+80], ll = br[2*i2+81];
-                uint64_t mm = br[2*i2+96], nn = br[2*i2+97];
-                uint64_t oo = br[2*i2+112], pp = br[2*i2+113];
-                BLAMKA_G(a, e, ii, mm);
-                BLAMKA_G(b, f, jj, nn);
-                BLAMKA_G(c, g, kk, oo);
-                BLAMKA_G(d, hh, ll, pp);
-                BLAMKA_G(a, f, kk, pp);
-                BLAMKA_G(b, g, ll, mm);
-                BLAMKA_G(c, hh, ii, nn);
-                BLAMKA_G(d, e, jj, oo);
-                br[2*i2]=a; br[2*i2+1]=b; br[2*i2+16]=c; br[2*i2+17]=d;
-                br[2*i2+32]=e; br[2*i2+33]=f; br[2*i2+48]=g; br[2*i2+49]=hh;
-                br[2*i2+64]=ii; br[2*i2+65]=jj; br[2*i2+80]=kk; br[2*i2+81]=ll;
-                br[2*i2+96]=mm; br[2*i2+97]=nn; br[2*i2+112]=oo; br[2*i2+113]=pp;
+                int base = 2 * static_cast<int>(group);
+                int idx[16] = {
+                    base, base+1, base+16, base+17,
+                    base+32, base+33, base+48, base+49,
+                    base+64, base+65, base+80, base+81,
+                    base+96, base+97, base+112, base+113
+                };
+                if(subop == 0)      { BLAMKA_G(br[idx[0]], br[idx[4]], br[idx[8]],  br[idx[12]]); }
+                else if(subop == 1) { BLAMKA_G(br[idx[1]], br[idx[5]], br[idx[9]],  br[idx[13]]); }
+                else if(subop == 2) { BLAMKA_G(br[idx[2]], br[idx[6]], br[idx[10]], br[idx[14]]); }
+                else                { BLAMKA_G(br[idx[3]], br[idx[7]], br[idx[11]], br[idx[15]]); }
             }
-            __syncthreads();
+            __syncwarp(0xFFFFFFFFU);
+            // Phase "lignes" - sous-ronde diagonales
+            {
+                unsigned int group = tid / 4;
+                unsigned int subop = tid % 4;
+                uint64_t* br = blockR[hashSlot];
+                int base = 2 * static_cast<int>(group);
+                int idx[16] = {
+                    base, base+1, base+16, base+17,
+                    base+32, base+33, base+48, base+49,
+                    base+64, base+65, base+80, base+81,
+                    base+96, base+97, base+112, base+113
+                };
+                if(subop == 0)      { BLAMKA_G(br[idx[0]], br[idx[5]], br[idx[10]], br[idx[15]]); }
+                else if(subop == 1) { BLAMKA_G(br[idx[1]], br[idx[6]], br[idx[11]], br[idx[12]]); }
+                else if(subop == 2) { BLAMKA_G(br[idx[2]], br[idx[7]], br[idx[8]],  br[idx[13]]); }
+                else                { BLAMKA_G(br[idx[3]], br[idx[4]], br[idx[9]],  br[idx[14]]); }
+            }
+            __syncwarp(0xFFFFFFFFU);
 
             uint64_t* curr = memory + static_cast<size_t>(sCurrOffset[hashSlot]) * 128;
-            for(int k = tid * 16; k < tid * 16 + 16; k++)
-            {
-                curr[k] = blockTmp[hashSlot][k] ^ blockR[hashSlot][k];
-            }
-            __syncthreads();
+            curr[tid]    = blockTmp[hashSlot][tid]    ^ blockR[hashSlot][tid];
+            curr[tid+32] = blockTmp[hashSlot][tid+32] ^ blockR[hashSlot][tid+32];
+            curr[tid+64] = blockTmp[hashSlot][tid+64] ^ blockR[hashSlot][tid+64];
+            curr[tid+96] = blockTmp[hashSlot][tid+96] ^ blockR[hashSlot][tid+96];
+            __syncwarp(0xFFFFFFFFU);
 
             if(tid == 0)
             {
                 sCurrOffset[hashSlot]++;
                 sPrevOffset[hashSlot]++;
             }
-            __syncthreads();
+            __syncwarp(0xFFFFFFFFU);
         }
     }
 
@@ -473,6 +511,175 @@ __global__ void blocknetArgon2idKernel(
         blake2bLong(outHashes + hashIdx * 32, 32, reinterpret_cast<const uint8_t*>(lastBlock), 1024);
     }
 }
+
+// Precharge physiquement chaque page de 4 KiB du tampon memoire AVANT
+// le vrai calcul Argon2id - cudaMalloc n'engage pas physiquement les
+// pages tant qu'on n'y accede pas pour la premiere fois, et l'acces
+// pseudo-aleatoire d'Argon2id sur l'ensemble des 2 GiB pourrait sinon
+// declencher ce cout de "premier acces" de facon repetee tout au long
+// du calcul chronometre lui-meme. Appele UNE SEULE FOIS a
+// l'allocation (pas a chaque lot), le tampon persistant entre les
+// appels a computeBatch().
+__global__ void touchMemoryKernel(uint64_t* __restrict__ memory, size_t totalWords)
+{
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t stride = static_cast<size_t>(blockDim.x) * gridDim.x;
+    for(size_t word = idx * 512; word < totalWords; word += stride * 512)
+    {
+        uint64_t v = memory[word];
+        memory[word] = v;
+    }
+}
+
+// Noyau de diagnostic isole : teste UNIQUEMENT blake2bSimple, sans
+// aucune logique Argon2 - permet de comparer a un vecteur de test
+// Blake2b standard et connu, independamment de tout le reste.
+__global__ void testBlake2bKernel(uint8_t* out, const uint8_t* in, uint32_t inlen, uint32_t outlen)
+{
+    blake2bSimple(out, outlen, in, inlen);
+}
+
+// Noyau de diagnostic : calcule UNIQUEMENT H0 (meme construction que
+// dans le noyau principal, copiee ici a l'identique pour isolation),
+// sans aller plus loin - permet de comparer directement a un calcul
+// independant (Python/hashlib) du meme H0.
+__global__ void testH0Kernel(
+    uint8_t* h0out,
+    const uint8_t* salt, uint32_t saltLen,
+    uint64_t nonce, uint32_t mCostKib
+)
+{
+    uint8_t h0input[8 + 92 + 4 + 8];
+    uint32_t pos = 0;
+    auto put32 = [&](uint32_t v) {
+        h0input[pos+0] = static_cast<uint8_t>(v & 0xff);
+        h0input[pos+1] = static_cast<uint8_t>((v>>8) & 0xff);
+        h0input[pos+2] = static_cast<uint8_t>((v>>16) & 0xff);
+        h0input[pos+3] = static_cast<uint8_t>((v>>24) & 0xff);
+        pos += 4;
+    };
+    put32(1); put32(32); put32(mCostKib); put32(1); put32(0x13); put32(2);
+    put32(8);
+    for(int b = 0; b < 8; b++) h0input[pos++] = static_cast<uint8_t>((nonce >> (8*b)) & 0xff);
+    put32(saltLen);
+    for(uint32_t i = 0; i < saltLen; i++) h0input[pos++] = salt[i];
+    put32(0); put32(0);
+
+    blake2bSimple(h0out, 64, h0input, pos);
+}
+
+// Noyau de diagnostic : calcule UNIQUEMENT block0 a partir d'un H0
+// deja connu (fourni directement, pas recalcule) - isole precisement
+// la logique blake2bLong (le chemin "sortie longue, chainee") pour
+// comparaison independante.
+__global__ void testBlock0Kernel(uint8_t* block0out, const uint8_t* h0in)
+{
+    uint8_t seedInput[64 + 4 + 4];
+    for(int i = 0; i < 64; i++) seedInput[i] = h0in[i];
+    seedInput[64]=0; seedInput[65]=0; seedInput[66]=0; seedInput[67]=0;
+    seedInput[68]=0; seedInput[69]=0; seedInput[70]=0; seedInput[71]=0;
+    blake2bLong(block0out, 1024, seedInput, 72);
+}
+
+// Noyau de diagnostic : appelle DIRECTEMENT notre fillBlock() (la
+// fonction sequentielle a un seul thread, pas la version cooperative
+// utilisee dans le noyau principal) sur deux blocs fournis - isole
+// precisement le melange BlaMka de tout le reste.
+__global__ void testFillBlockKernel(
+    uint64_t* __restrict__ out,
+    const uint64_t* __restrict__ prev,
+    const uint64_t* __restrict__ ref
+)
+{
+    fillBlock(prev, ref, out);
+}
+
+// Noyau de diagnostic : reproduit EXACTEMENT le code cooperatif de la
+// boucle principale (32 threads, memoire partagee, __syncwarp reel),
+// sur les memes deux blocs de test - permet de comparer directement
+// a la version sequentielle deja validee comme correcte, isolant
+// precisement si le bug vient de LA PARALLELISATION elle-meme.
+__global__ void testFillBlockCoopKernel(
+    uint64_t* __restrict__ memory, // memory[0]=prev, memory[1]=ref, memory[2]=curr (out)
+    uint64_t* __restrict__ outResult
+)
+{
+    unsigned int tid = threadIdx.x;
+    __shared__ uint64_t blockR[128];
+    __shared__ uint64_t blockTmp[128];
+
+    const uint64_t* ref = memory + 1 * 128;
+    const uint64_t* prev = memory + 0 * 128;
+    blockR[tid]      = ref[tid]      ^ prev[tid];
+    blockR[tid+32]   = ref[tid+32]   ^ prev[tid+32];
+    blockR[tid+64]   = ref[tid+64]   ^ prev[tid+64];
+    blockR[tid+96]   = ref[tid+96]   ^ prev[tid+96];
+    blockTmp[tid]    = blockR[tid];
+    blockTmp[tid+32] = blockR[tid+32];
+    blockTmp[tid+64] = blockR[tid+64];
+    blockTmp[tid+96] = blockR[tid+96];
+    __syncwarp(0xFFFFFFFFU);
+
+    {
+        unsigned int group = tid / 4;
+        unsigned int subop = tid % 4;
+        uint64_t* v = blockR + 16 * group;
+        if(subop == 0)      { BLAMKA_G(v[0], v[4], v[8],  v[12]); }
+        else if(subop == 1) { BLAMKA_G(v[1], v[5], v[9],  v[13]); }
+        else if(subop == 2) { BLAMKA_G(v[2], v[6], v[10], v[14]); }
+        else                { BLAMKA_G(v[3], v[7], v[11], v[15]); }
+    }
+    __syncwarp(0xFFFFFFFFU);
+    {
+        unsigned int group = tid / 4;
+        unsigned int subop = tid % 4;
+        uint64_t* v = blockR + 16 * group;
+        if(subop == 0)      { BLAMKA_G(v[0], v[5], v[10], v[15]); }
+        else if(subop == 1) { BLAMKA_G(v[1], v[6], v[11], v[12]); }
+        else if(subop == 2) { BLAMKA_G(v[2], v[7], v[8],  v[13]); }
+        else                { BLAMKA_G(v[3], v[4], v[9],  v[14]); }
+    }
+    __syncwarp(0xFFFFFFFFU);
+
+    {
+        unsigned int group = tid / 4;
+        unsigned int subop = tid % 4;
+        int base = 2 * static_cast<int>(group);
+        int idx[16] = {
+            base, base+1, base+16, base+17,
+            base+32, base+33, base+48, base+49,
+            base+64, base+65, base+80, base+81,
+            base+96, base+97, base+112, base+113
+        };
+        if(subop == 0)      { BLAMKA_G(blockR[idx[0]], blockR[idx[4]], blockR[idx[8]],  blockR[idx[12]]); }
+        else if(subop == 1) { BLAMKA_G(blockR[idx[1]], blockR[idx[5]], blockR[idx[9]],  blockR[idx[13]]); }
+        else if(subop == 2) { BLAMKA_G(blockR[idx[2]], blockR[idx[6]], blockR[idx[10]], blockR[idx[14]]); }
+        else                { BLAMKA_G(blockR[idx[3]], blockR[idx[7]], blockR[idx[11]], blockR[idx[15]]); }
+    }
+    __syncwarp(0xFFFFFFFFU);
+    {
+        unsigned int group = tid / 4;
+        unsigned int subop = tid % 4;
+        int base = 2 * static_cast<int>(group);
+        int idx[16] = {
+            base, base+1, base+16, base+17,
+            base+32, base+33, base+48, base+49,
+            base+64, base+65, base+80, base+81,
+            base+96, base+97, base+112, base+113
+        };
+        if(subop == 0)      { BLAMKA_G(blockR[idx[0]], blockR[idx[5]], blockR[idx[10]], blockR[idx[15]]); }
+        else if(subop == 1) { BLAMKA_G(blockR[idx[1]], blockR[idx[6]], blockR[idx[11]], blockR[idx[12]]); }
+        else if(subop == 2) { BLAMKA_G(blockR[idx[2]], blockR[idx[7]], blockR[idx[8]],  blockR[idx[13]]); }
+        else                { BLAMKA_G(blockR[idx[3]], blockR[idx[4]], blockR[idx[9]],  blockR[idx[14]]); }
+    }
+    __syncwarp(0xFFFFFFFFU);
+
+    outResult[tid]    = blockTmp[tid]    ^ blockR[tid];
+    outResult[tid+32] = blockTmp[tid+32] ^ blockR[tid+32];
+    outResult[tid+64] = blockTmp[tid+64] ^ blockR[tid+64];
+    outResult[tid+96] = blockTmp[tid+96] ^ blockR[tid+96];
+}
+
 // ---------------------------------------------------------------
 // Wrapper hote (C++)
 // ---------------------------------------------------------------
@@ -507,6 +714,19 @@ struct BlocknetGpuHasher::Impl
         {
             throw std::runtime_error(std::string("cudaMalloc (memory pool) failed: ") + cudaGetErrorString(err));
         }
+
+        // Prechargement physique unique de tout le tampon (voir le
+        // commentaire du noyau touchMemoryKernel plus haut).
+        size_t totalWords = static_cast<size_t>(batchSizeValue) * mCostKib * 128;
+        unsigned int touchThreads = 256;
+        unsigned int touchBlocks = 256;
+        touchMemoryKernel<<<touchBlocks, touchThreads>>>(d_memoryPool, totalWords);
+        cudaError_t touchErr = cudaDeviceSynchronize();
+        if(touchErr != cudaSuccess)
+        {
+            throw std::runtime_error(std::string("touchMemoryKernel failed: ") + cudaGetErrorString(touchErr));
+        }
+
         cudaMalloc(&d_nonces, batchSizeValue * sizeof(uint64_t));
         cudaMalloc(&d_salt, 92);
         cudaMalloc(&d_outHashes, batchSizeValue * 32);
@@ -568,7 +788,10 @@ void BlocknetGpuHasher::computeBatch()
     // d'un GPU moderne), maximiser la largeur (nombre de blocs) prime
     // sur l'efficacite interne a chaque bloc (occupation du warp) -
     // voir la discussion de session sur ce compromis.
-    unsigned int threadsPerBlock = 8;
+    // 32 threads cooperants par hachage (exploite les 32 operations
+    // veritablement paralleles par phase - voir le noyau), 1 hachage
+    // par bloc pour maximiser le nombre de SM actifs.
+    unsigned int threadsPerBlock = 32;
     unsigned int blocks = static_cast<unsigned int>(impl_->batchSizeValue);
 
     blocknetArgon2idKernel<<<blocks, threadsPerBlock>>>(
@@ -579,7 +802,16 @@ void BlocknetGpuHasher::computeBatch()
         impl_->d_memoryPool,
         impl_->d_outHashes
     );
-    cudaDeviceSynchronize();
+    cudaError_t launchErr = cudaGetLastError();
+    if(launchErr != cudaSuccess)
+    {
+        throw std::runtime_error(std::string("kernel launch failed: ") + cudaGetErrorString(launchErr));
+    }
+    cudaError_t syncErr = cudaDeviceSynchronize();
+    if(syncErr != cudaSuccess)
+    {
+        throw std::runtime_error(std::string("kernel execution failed: ") + cudaGetErrorString(syncErr));
+    }
 
     cudaMemcpy(impl_->h_outHashes.data(), impl_->d_outHashes,
                impl_->batchSizeValue * 32, cudaMemcpyDeviceToHost);
@@ -593,6 +825,19 @@ void BlocknetGpuHasher::getHash(size_t index, uint8_t* out) const
 size_t BlocknetGpuHasher::batchSize() const
 {
     return impl_->batchSizeValue;
+}
+
+std::vector<uint8_t> BlocknetGpuHasher::debugDumpMemory(size_t index, size_t mCostKib) const
+{
+    size_t bytesPerHash = mCostKib * 128 * sizeof(uint64_t);
+    std::vector<uint8_t> result(bytesPerHash);
+    cudaMemcpy(
+        result.data(),
+        reinterpret_cast<uint8_t*>(impl_->d_memoryPool) + index * bytesPerHash,
+        bytesPerHash,
+        cudaMemcpyDeviceToHost
+    );
+    return result;
 }
 
 int blocknetGpuDeviceCount()

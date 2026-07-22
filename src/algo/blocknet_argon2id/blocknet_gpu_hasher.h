@@ -41,6 +41,11 @@ public:
     // le job (donc le header_base) a change.
     void setSalt(const uint8_t* data, size_t len) override;
 
+    // DIAGNOSTIC TEMPORAIRE : extrait l'integralite de la memoire d'un
+    // hachage donne du lot, pour comparaison bloc par bloc avec une
+    // reference independante. A retirer une fois le bug localise.
+    std::vector<uint8_t> debugDumpMemory(size_t index, size_t mCostKib) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
