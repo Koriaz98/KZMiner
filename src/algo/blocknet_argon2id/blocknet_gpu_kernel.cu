@@ -407,93 +407,88 @@ __global__ void blocknetArgon2idKernel(
             }
             __syncwarp(0xFFFFFFFFU);
 
-            // --- fillBlock cooperatif (32 threads = 1 warp complet par
-            // hachage). Chacun des 8 groupes independants de 16 mots
-            // contient en realite 4 sous-calculs G independants entre
-            // eux (colonnes), puis 4 autres sous-calculs independants
-            // (diagonales, dependant des resultats des colonnes) - soit
-            // 8 x 4 = 32 operations veritablement paralleles par phase,
-            // pas seulement 8 comme dans la version precedente (qui
-            // traitait les 4+4 G d'un groupe sequentiellement par un
-            // seul thread). Correction majeure identifiee en comparant
-            // au noyau reel de seine.
+            // --- fillBlock cooperatif FUSIONNE (shuffle-warp, opti
+            // inspiree de compress_block_coop / A82 de seine) : au lieu
+            // de 4 sous-rondes separees par une barriere via memoire
+            // partagee, on fusionne colonnes+diagonales de chaque phase
+            // en gardant les valeurs en registres et en les echangeant
+            // entre les 4 threads d'un groupe via __shfl_sync. Economise
+            // 2 barrieres + de nombreux acces memoire partagee par bloc.
+            // Valide octet par octet contre la reference sequentielle.
+            // NB : phase "groupes contigus (16*state)" EN PREMIER (ce que
+            // ref.c fait en premier), puis phase "motif espace (2*state)".
             const uint64_t* ref = memory + static_cast<size_t>(sRefIndex[hashSlot]) * 128;
             const uint64_t* prev = memory + static_cast<size_t>(sPrevOffset[hashSlot]) * 128;
-            blockR[hashSlot][tid]      = ref[tid]      ^ prev[tid];
-            blockR[hashSlot][tid+32]   = ref[tid+32]   ^ prev[tid+32];
-            blockR[hashSlot][tid+64]   = ref[tid+64]   ^ prev[tid+64];
-            blockR[hashSlot][tid+96]   = ref[tid+96]   ^ prev[tid+96];
-            blockTmp[hashSlot][tid]    = blockR[hashSlot][tid];
-            blockTmp[hashSlot][tid+32] = blockR[hashSlot][tid+32];
-            blockTmp[hashSlot][tid+64] = blockR[hashSlot][tid+64];
-            blockTmp[hashSlot][tid+96] = blockR[hashSlot][tid+96];
-            __syncwarp(0xFFFFFFFFU);
-
-            // Phase "colonnes" (8 groupes contigus de 16 mots) - sous-ronde colonnes
+            uint64_t* br = blockR[hashSlot];
+            uint64_t* bt = blockTmp[hashSlot];
             {
-                unsigned int group = tid / 4;
-                unsigned int subop = tid % 4;
-                uint64_t* v = blockR[hashSlot] + 16 * group;
-                if(subop == 0)      { BLAMKA_G(v[0], v[4], v[8],  v[12]); }
-                else if(subop == 1) { BLAMKA_G(v[1], v[5], v[9],  v[13]); }
-                else if(subop == 2) { BLAMKA_G(v[2], v[6], v[10], v[14]); }
-                else                { BLAMKA_G(v[3], v[7], v[11], v[15]); }
-            }
-            __syncwarp(0xFFFFFFFFU);
-            // Phase "colonnes" - sous-ronde diagonales (depend des colonnes ci-dessus)
-            {
-                unsigned int group = tid / 4;
-                unsigned int subop = tid % 4;
-                uint64_t* v = blockR[hashSlot] + 16 * group;
-                if(subop == 0)      { BLAMKA_G(v[0], v[5], v[10], v[15]); }
-                else if(subop == 1) { BLAMKA_G(v[1], v[6], v[11], v[12]); }
-                else if(subop == 2) { BLAMKA_G(v[2], v[7], v[8],  v[13]); }
-                else                { BLAMKA_G(v[3], v[4], v[9],  v[14]); }
+                uint64_t x0 = ref[tid]    ^ prev[tid];
+                uint64_t x1 = ref[tid+32] ^ prev[tid+32];
+                uint64_t x2 = ref[tid+64] ^ prev[tid+64];
+                uint64_t x3 = ref[tid+96] ^ prev[tid+96];
+                br[tid]=x0; bt[tid]=x0;
+                br[tid+32]=x1; bt[tid+32]=x1;
+                br[tid+64]=x2; bt[tid+64]=x2;
+                br[tid+96]=x3; bt[tid+96]=x3;
             }
             __syncwarp(0xFFFFFFFFU);
 
-            // Phase "lignes" (motif 2*i non contigu) - sous-ronde colonnes
             {
-                unsigned int group = tid / 4;
-                unsigned int subop = tid % 4;
-                uint64_t* br = blockR[hashSlot];
-                int base = 2 * static_cast<int>(group);
-                int idx[16] = {
-                    base, base+1, base+16, base+17,
-                    base+32, base+33, base+48, base+49,
-                    base+64, base+65, base+80, base+81,
-                    base+96, base+97, base+112, base+113
-                };
-                if(subop == 0)      { BLAMKA_G(br[idx[0]], br[idx[4]], br[idx[8]],  br[idx[12]]); }
-                else if(subop == 1) { BLAMKA_G(br[idx[1]], br[idx[5]], br[idx[9]],  br[idx[13]]); }
-                else if(subop == 2) { BLAMKA_G(br[idx[2]], br[idx[6]], br[idx[10]], br[idx[14]]); }
-                else                { BLAMKA_G(br[idx[3]], br[idx[7]], br[idx[11]], br[idx[15]]); }
+                const unsigned int state = tid >> 2;
+                const unsigned int lane  = tid & 3U;
+                const unsigned int shflBase = state * 4U;
+
+                // Phase 1 : groupes contigus de 16 mots (colonnes+diagonales fusionnees)
+                {
+                    const unsigned int base = state * 16U;
+                    uint64_t a = br[base + lane];
+                    uint64_t b = br[base + 4U + lane];
+                    uint64_t c = br[base + 8U + lane];
+                    uint64_t d = br[base + 12U + lane];
+                    BLAMKA_G(a, b, c, d);
+                    uint64_t a2 = a;
+                    uint64_t b2 = __shfl_sync(0xFFFFFFFFU, b, shflBase + ((lane + 1U) & 3U));
+                    uint64_t c2 = __shfl_sync(0xFFFFFFFFU, c, shflBase + ((lane + 2U) & 3U));
+                    uint64_t d2 = __shfl_sync(0xFFFFFFFFU, d, shflBase + ((lane + 3U) & 3U));
+                    BLAMKA_G(a2, b2, c2, d2);
+                    br[base + lane]                = a2;
+                    br[base + 4U + ((lane+1U)&3U)] = b2;
+                    br[base + 8U + ((lane+2U)&3U)] = c2;
+                    br[base + 12U + ((lane+3U)&3U)]= d2;
+                }
+                __syncwarp(0xFFFFFFFFU);
+
+                // Phase 2 : motif espace (2*state) (colonnes+diagonales fusionnees)
+                {
+                    const unsigned int b0 = state * 2U;
+                    const unsigned int colSub = (lane >> 1) * 16U + (lane & 1U);
+                    uint64_t a = br[b0 + colSub];
+                    uint64_t c = br[b0 + 32U + colSub];
+                    uint64_t d = br[b0 + 64U + colSub];
+                    uint64_t e = br[b0 + 96U + colSub];
+                    BLAMKA_G(a, c, d, e);
+                    uint64_t a2 = a;
+                    uint64_t c2 = __shfl_sync(0xFFFFFFFFU, c, shflBase + ((lane + 1U) & 3U));
+                    uint64_t d2 = __shfl_sync(0xFFFFFFFFU, d, shflBase + ((lane + 2U) & 3U));
+                    uint64_t e2 = __shfl_sync(0xFFFFFFFFU, e, shflBase + ((lane + 3U) & 3U));
+                    BLAMKA_G(a2, c2, d2, e2);
+                    const unsigned int p0 = lane;
+                    const unsigned int p1 = (lane + 1U) & 3U;
+                    const unsigned int p2 = (lane + 2U) & 3U;
+                    const unsigned int p3 = (lane + 3U) & 3U;
+                    br[b0 + (p0>>1)*16U + (p0&1U)]       = a2;
+                    br[b0 + 32U + (p1>>1)*16U + (p1&1U)] = c2;
+                    br[b0 + 64U + (p2>>1)*16U + (p2&1U)] = d2;
+                    br[b0 + 96U + (p3>>1)*16U + (p3&1U)] = e2;
+                }
+                __syncwarp(0xFFFFFFFFU);
             }
-            __syncwarp(0xFFFFFFFFU);
-            // Phase "lignes" - sous-ronde diagonales
-            {
-                unsigned int group = tid / 4;
-                unsigned int subop = tid % 4;
-                uint64_t* br = blockR[hashSlot];
-                int base = 2 * static_cast<int>(group);
-                int idx[16] = {
-                    base, base+1, base+16, base+17,
-                    base+32, base+33, base+48, base+49,
-                    base+64, base+65, base+80, base+81,
-                    base+96, base+97, base+112, base+113
-                };
-                if(subop == 0)      { BLAMKA_G(br[idx[0]], br[idx[5]], br[idx[10]], br[idx[15]]); }
-                else if(subop == 1) { BLAMKA_G(br[idx[1]], br[idx[6]], br[idx[11]], br[idx[12]]); }
-                else if(subop == 2) { BLAMKA_G(br[idx[2]], br[idx[7]], br[idx[8]],  br[idx[13]]); }
-                else                { BLAMKA_G(br[idx[3]], br[idx[4]], br[idx[9]],  br[idx[14]]); }
-            }
-            __syncwarp(0xFFFFFFFFU);
 
             uint64_t* curr = memory + static_cast<size_t>(sCurrOffset[hashSlot]) * 128;
-            curr[tid]    = blockTmp[hashSlot][tid]    ^ blockR[hashSlot][tid];
-            curr[tid+32] = blockTmp[hashSlot][tid+32] ^ blockR[hashSlot][tid+32];
-            curr[tid+64] = blockTmp[hashSlot][tid+64] ^ blockR[hashSlot][tid+64];
-            curr[tid+96] = blockTmp[hashSlot][tid+96] ^ blockR[hashSlot][tid+96];
+            curr[tid]    = bt[tid]    ^ br[tid];
+            curr[tid+32] = bt[tid+32] ^ br[tid+32];
+            curr[tid+64] = bt[tid+64] ^ br[tid+64];
+            curr[tid+96] = bt[tid+96] ^ br[tid+96];
             __syncwarp(0xFFFFFFFFU);
 
             if(tid == 0)

@@ -35,7 +35,7 @@ configure_file(
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 14)
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo --maxrregcount=208")
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=x86-64-v2 -mpopcnt -flto")
 
@@ -177,4 +177,10 @@ add_executable(
     blocknet-finalhash-test
     src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
     src/algo/blocknet_argon2id/blocknet_finalhash_test.cu
+)
+
+add_executable(
+    blocknet-shfl-test
+    src/algo/blocknet_argon2id/blocknet_shfl_diag.cu
+    src/algo/blocknet_argon2id/blocknet_shfl_test.cu
 )
