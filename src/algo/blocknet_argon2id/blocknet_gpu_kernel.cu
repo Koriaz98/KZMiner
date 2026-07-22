@@ -273,6 +273,17 @@ __device__ void nextAddresses(uint64_t* addressBlock, uint64_t* inputBlock)
 // que le materiel CUDA planifie de toute facon par "warp" - 75% de la
 // capacite de calcul etait gaspillee. Ici, 4 hachages independants se
 // partagent un meme warp complet, sans rien gaspiller.
+// Declarations anticipees (definitions plus bas dans le fichier) -
+// necessaires car le noyau principal les appelle avant leur definition.
+__device__ __forceinline__ void compressBlockCoop(
+    const uint64_t* __restrict__ prev, const uint64_t* __restrict__ ref,
+    uint64_t* __restrict__ out, uint64_t* __restrict__ scratchR,
+    uint64_t* __restrict__ scratchQ, unsigned int tid);
+__device__ __forceinline__ void nextAddressesCoop(
+    uint64_t* __restrict__ addressBlock, uint64_t* __restrict__ inputBlock,
+    uint64_t* __restrict__ zeroBlock, uint64_t* __restrict__ scratchR,
+    uint64_t* __restrict__ scratchQ, unsigned int tid);
+
 __global__ void blocknetArgon2idKernel(
     const uint8_t* __restrict__ salt,
     uint32_t saltLen,
@@ -308,6 +319,7 @@ __global__ void blocknetArgon2idKernel(
     __shared__ uint64_t blockTmp[1][128];
     __shared__ uint64_t addressBlock[1][128];
     __shared__ uint64_t inputBlock[1][128];
+    __shared__ uint64_t zeroBlockShared[128];  // bloc de zeros pour nextAddressesCoop
     __shared__ uint32_t sCurrOffset[1];
     __shared__ uint32_t sPrevOffset[1];
     __shared__ uint32_t sRefIndex[1];
@@ -354,6 +366,11 @@ __global__ void blocknetArgon2idKernel(
     }
     __syncwarp(0xFFFFFFFFU);
 
+    // Init cooperative du bloc de zeros (pour nextAddressesCoop).
+    zeroBlockShared[tid]=0; zeroBlockShared[tid+32]=0;
+    zeroBlockShared[tid+64]=0; zeroBlockShared[tid+96]=0;
+    __syncwarp(0xFFFFFFFFU);
+
     const uint32_t segmentLength = mCostKib / 4;
 
     for(uint32_t slice = 0; slice < 4; slice++)
@@ -361,14 +378,19 @@ __global__ void blocknetArgon2idKernel(
         bool dataIndependent = (slice < 2);
         uint32_t startingIndex = (slice == 0) ? 2 : 0;
 
-        if(tid == 0)
+        if(dataIndependent)
         {
-            if(dataIndependent)
+            if(tid == 0)
             {
                 inputBlock[hashSlot][2] = slice;
                 inputBlock[hashSlot][6] = 0;
-                nextAddresses(addressBlock[hashSlot], inputBlock[hashSlot]);
             }
+            __syncwarp(0xFFFFFFFFU);
+            nextAddressesCoop(addressBlock[hashSlot], inputBlock[hashSlot],
+                              zeroBlockShared, blockR[hashSlot], blockTmp[hashSlot], tid);
+        }
+        if(tid == 0)
+        {
             sCurrOffset[hashSlot] = slice * segmentLength + startingIndex;
             sPrevOffset[hashSlot] = (sCurrOffset[hashSlot] == 0) ? (mCostKib - 1) : (sCurrOffset[hashSlot] - 1);
         }
@@ -376,6 +398,17 @@ __global__ void blocknetArgon2idKernel(
 
         for(uint32_t i = startingIndex; i < segmentLength; i++)
         {
+            // Regeneration COOPERATIVE du bloc d'adresses (32 threads),
+            // sortie du if(tid==0) pour que tous les threads participent.
+            if(dataIndependent)
+            {
+                uint32_t addrIdx = i % 128;
+                if(i != startingIndex && addrIdx == 0)
+                {
+                    nextAddressesCoop(addressBlock[hashSlot], inputBlock[hashSlot],
+                                      zeroBlockShared, blockR[hashSlot], blockTmp[hashSlot], tid);
+                }
+            }
             if(tid == 0)
             {
                 if(sCurrOffset[hashSlot] % mCostKib == 1) sPrevOffset[hashSlot] = sCurrOffset[hashSlot] - 1;
@@ -384,10 +417,6 @@ __global__ void blocknetArgon2idKernel(
                 if(dataIndependent)
                 {
                     uint32_t addrIdx = i % 128;
-                    if(i != startingIndex && addrIdx == 0)
-                    {
-                        nextAddresses(addressBlock[hashSlot], inputBlock[hashSlot]);
-                    }
                     pseudoRand = addressBlock[hashSlot][addrIdx];
                 }
                 else
@@ -529,6 +558,140 @@ __global__ void touchMemoryKernel(uint64_t* __restrict__ memory, size_t totalWor
 // Noyau de diagnostic isole : teste UNIQUEMENT blake2bSimple, sans
 // aucune logique Argon2 - permet de comparer a un vecteur de test
 // Blake2b standard et connu, independamment de tout le reste.
+// Compression fusionnee cooperative (32 threads), extraite pour etre
+// reutilisable : prev/ref -> out. scratchR/scratchQ sont des buffers de
+// memoire partagee de 128 mots fournis par l'appelant. Meme logique que
+// la boucle principale (opti A82 shuffle), validee octet par octet.
+__device__ __forceinline__ void compressBlockCoop(
+    const uint64_t* __restrict__ prev,
+    const uint64_t* __restrict__ ref,
+    uint64_t* __restrict__ out,
+    uint64_t* __restrict__ scratchR,
+    uint64_t* __restrict__ scratchQ,
+    unsigned int tid
+)
+{
+    uint64_t x0 = ref[tid]    ^ prev[tid];
+    uint64_t x1 = ref[tid+32] ^ prev[tid+32];
+    uint64_t x2 = ref[tid+64] ^ prev[tid+64];
+    uint64_t x3 = ref[tid+96] ^ prev[tid+96];
+    scratchR[tid]=x0; scratchQ[tid]=x0;
+    scratchR[tid+32]=x1; scratchQ[tid+32]=x1;
+    scratchR[tid+64]=x2; scratchQ[tid+64]=x2;
+    scratchR[tid+96]=x3; scratchQ[tid+96]=x3;
+    __syncwarp(0xFFFFFFFFU);
+
+    const unsigned int state = tid >> 2;
+    const unsigned int lane  = tid & 3U;
+    const unsigned int shflBase = state * 4U;
+
+    // Phase 1 : groupes contigus (16*state)
+    {
+        const unsigned int base = state * 16U;
+        uint64_t a = scratchQ[base + lane];
+        uint64_t b = scratchQ[base + 4U + lane];
+        uint64_t c = scratchQ[base + 8U + lane];
+        uint64_t d = scratchQ[base + 12U + lane];
+        BLAMKA_G(a, b, c, d);
+        uint64_t a2 = a;
+        uint64_t b2 = __shfl_sync(0xFFFFFFFFU, b, shflBase + ((lane + 1U) & 3U));
+        uint64_t c2 = __shfl_sync(0xFFFFFFFFU, c, shflBase + ((lane + 2U) & 3U));
+        uint64_t d2 = __shfl_sync(0xFFFFFFFFU, d, shflBase + ((lane + 3U) & 3U));
+        BLAMKA_G(a2, b2, c2, d2);
+        scratchQ[base + lane]                = a2;
+        scratchQ[base + 4U + ((lane+1U)&3U)] = b2;
+        scratchQ[base + 8U + ((lane+2U)&3U)] = c2;
+        scratchQ[base + 12U + ((lane+3U)&3U)]= d2;
+    }
+    __syncwarp(0xFFFFFFFFU);
+
+    // Phase 2 : motif espace (2*state)
+    {
+        const unsigned int b0 = state * 2U;
+        const unsigned int colSub = (lane >> 1) * 16U + (lane & 1U);
+        uint64_t a = scratchQ[b0 + colSub];
+        uint64_t c = scratchQ[b0 + 32U + colSub];
+        uint64_t d = scratchQ[b0 + 64U + colSub];
+        uint64_t e = scratchQ[b0 + 96U + colSub];
+        BLAMKA_G(a, c, d, e);
+        uint64_t a2 = a;
+        uint64_t c2 = __shfl_sync(0xFFFFFFFFU, c, shflBase + ((lane + 1U) & 3U));
+        uint64_t d2 = __shfl_sync(0xFFFFFFFFU, d, shflBase + ((lane + 2U) & 3U));
+        uint64_t e2 = __shfl_sync(0xFFFFFFFFU, e, shflBase + ((lane + 3U) & 3U));
+        BLAMKA_G(a2, c2, d2, e2);
+        const unsigned int p0 = lane;
+        const unsigned int p1 = (lane + 1U) & 3U;
+        const unsigned int p2 = (lane + 2U) & 3U;
+        const unsigned int p3 = (lane + 3U) & 3U;
+        scratchQ[b0 + (p0>>1)*16U + (p0&1U)]       = a2;
+        scratchQ[b0 + 32U + (p1>>1)*16U + (p1&1U)] = c2;
+        scratchQ[b0 + 64U + (p2>>1)*16U + (p2&1U)] = d2;
+        scratchQ[b0 + 96U + (p3>>1)*16U + (p3&1U)] = e2;
+    }
+    __syncwarp(0xFFFFFFFFU);
+
+    out[tid]    = scratchR[tid]    ^ scratchQ[tid];
+    out[tid+32] = scratchR[tid+32] ^ scratchQ[tid+32];
+    out[tid+64] = scratchR[tid+64] ^ scratchQ[tid+64];
+    out[tid+96] = scratchR[tid+96] ^ scratchQ[tid+96];
+    __syncwarp(0xFFFFFFFFU);
+}
+
+// Version COOPERATIVE de nextAddresses (32 threads). addressBlock et
+// inputBlock sont en memoire partagee (fournis par l'appelant), zero /
+// scratchR / scratchQ aussi. Reproduit : input[6]++, addr=compress(zero,
+// input), addr=compress(zero,addr).
+__device__ __forceinline__ void nextAddressesCoop(
+    uint64_t* __restrict__ addressBlock,
+    uint64_t* __restrict__ inputBlock,
+    uint64_t* __restrict__ zeroBlock,
+    uint64_t* __restrict__ scratchR,
+    uint64_t* __restrict__ scratchQ,
+    unsigned int tid
+)
+{
+    if(tid == 0) inputBlock[6]++;
+    __syncwarp(0xFFFFFFFFU);
+    compressBlockCoop(zeroBlock, inputBlock, addressBlock, scratchR, scratchQ, tid);
+    compressBlockCoop(zeroBlock, addressBlock, addressBlock, scratchR, scratchQ, tid);
+}
+
+// DIAGNOSTIC : version cooperative, a valider contre l'etalon sequentiel.
+__global__ void testNextAddrCoopKernel(uint64_t* inputInOut, uint64_t* addrOut)
+{
+    __shared__ uint64_t s_input[128];
+    __shared__ uint64_t s_addr[128];
+    __shared__ uint64_t s_zero[128];
+    __shared__ uint64_t s_scratchR[128];
+    __shared__ uint64_t s_scratchQ[128];
+    unsigned int tid = threadIdx.x;
+
+    s_input[tid]    = inputInOut[tid];
+    s_input[tid+32] = inputInOut[tid+32];
+    s_input[tid+64] = inputInOut[tid+64];
+    s_input[tid+96] = inputInOut[tid+96];
+    s_zero[tid]=0; s_zero[tid+32]=0; s_zero[tid+64]=0; s_zero[tid+96]=0;
+    __syncwarp(0xFFFFFFFFU);
+
+    nextAddressesCoop(s_addr, s_input, s_zero, s_scratchR, s_scratchQ, tid);
+
+    addrOut[tid]    = s_addr[tid];
+    addrOut[tid+32] = s_addr[tid+32];
+    addrOut[tid+64] = s_addr[tid+64];
+    addrOut[tid+96] = s_addr[tid+96];
+}
+
+// DIAGNOSTIC : appelle notre nextAddresses SEQUENTIEL actuel (1 thread),
+// pour confirmer que la reference independante modelise bien le vrai code
+// avant de construire/valider une version cooperative.
+__global__ void testNextAddrSeqKernel(uint64_t* inputInOut, uint64_t* addrOut)
+{
+    if(threadIdx.x == 0)
+    {
+        nextAddresses(addrOut, inputInOut);
+    }
+}
+
 __global__ void testBlake2bKernel(uint8_t* out, const uint8_t* in, uint32_t inlen, uint32_t outlen)
 {
     blake2bSimple(out, outlen, in, inlen);

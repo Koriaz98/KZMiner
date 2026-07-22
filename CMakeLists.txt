@@ -184,3 +184,9 @@ add_executable(
     src/algo/blocknet_argon2id/blocknet_shfl_diag.cu
     src/algo/blocknet_argon2id/blocknet_shfl_test.cu
 )
+
+add_executable(
+    blocknet-nextaddr-test
+    src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
+    src/algo/blocknet_argon2id/blocknet_nextaddr_test.cu
+)
