@@ -10,6 +10,8 @@
 #include <chrono>
 #include <memory>
 #include <vector>
+#include <deque>
+#include <algorithm>
 #include "config/config.h"
 #include "cpu/cpu_miner.h"
 #include "gpu/gpu_miner.h"
@@ -276,6 +278,16 @@ int main(int argc, char **argv)
     std::vector<std::chrono::steady_clock::time_point> lastGpuChangeTime(
         gpuDeviceCount, std::chrono::steady_clock::now()
     );
+    // Fenetre temporelle glissante par GPU : on garde des couples
+    // (temps, compteur cumule de hachages) sur ~10s, et on calcule le
+    // taux comme (hachages sur la fenetre) / (temps reel de la fenetre).
+    // C'est le vrai debit moyen (throughput_hps de seine) : stable ET
+    // fidele a la charge reelle (donc coherent avec la puissance
+    // consommee), contrairement a une mesure entre deux tours qui, sur
+    // des lots, sous-estime ou oscille.
+    const double kRateWindowSeconds = 10.0;
+    struct RateSample { std::chrono::steady_clock::time_point t; uint64_t hashes; };
+    std::vector<std::deque<RateSample>> gpuRateWindow(gpuDeviceCount);
     uint64_t previousCpuHashes = 0;
     auto lastCpuChangeTime = std::chrono::steady_clock::now();
     uint64_t previousAccepted = 0;
@@ -339,11 +351,37 @@ int main(int argc, char **argv)
                 uint64_t curr = gpuMiner->getDeviceHashes(static_cast<int>(i));
                 uint64_t prevHash = (i < previousGpuHashes.size())
                     ? previousGpuHashes[i] : 0;
-                if(curr != prevHash && i < lastGpuChangeTime.size())
+                if(i < gpuRateWindow.size())
                 {
-                    double elapsed = std::chrono::duration<double>(now - lastGpuChangeTime[i]).count();
-                    if(elapsed < 0.1) elapsed = 0.1;
-                    gpuRows[i].hashrate = static_cast<double>(curr - prevHash) / elapsed;
+                    // On enregistre le point courant (temps, compteur cumule).
+                    gpuRateWindow[i].push_back({now, curr});
+                    // On purge les points plus vieux que la fenetre, mais on
+                    // garde toujours au moins le plus ancien point encore utile
+                    // pour avoir une base de comparaison des le debut.
+                    while(gpuRateWindow[i].size() > 2)
+                    {
+                        double age = std::chrono::duration<double>(
+                            now - gpuRateWindow[i].front().t).count();
+                        double ageNext = std::chrono::duration<double>(
+                            now - gpuRateWindow[i][1].t).count();
+                        // On retire le plus ancien seulement si le suivant
+                        // couvre encore toute la fenetre (evite de trop
+                        // raccourcir la base de mesure).
+                        if(age > kRateWindowSeconds && ageNext >= kRateWindowSeconds)
+                            gpuRateWindow[i].pop_front();
+                        else
+                            break;
+                    }
+                    // Taux = hachages accumules sur la fenetre / temps reel
+                    // ecoule entre le plus ancien point et maintenant.
+                    const auto& oldest = gpuRateWindow[i].front();
+                    double windowElapsed = std::chrono::duration<double>(
+                        now - oldest.t).count();
+                    if(windowElapsed >= 0.5 && curr >= oldest.hashes)
+                    {
+                        gpuRows[i].hashrate =
+                            static_cast<double>(curr - oldest.hashes) / windowElapsed;
+                    }
                     previousGpuHashes[i] = curr;
                     lastGpuChangeTime[i] = now;
                 }
