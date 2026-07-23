@@ -436,6 +436,40 @@ __global__ void blocknetArgon2idKernel(
             }
             __syncwarp(0xFFFFFFFFU);
 
+            // --- A73 : hint d'ordonnancement (calcul d'adresse anticipe
+            // du bloc SUIVANT + prefetch L2). Le prefetch lui-meme est
+            // supprime par PTXAS sur sm_120 (Blackwell), mais
+            // l'arithmetique d'adresse qui l'entoure reorganise
+            // l'ordonnancement d'instructions de la boucle de compression
+            // qui suit. Calcul JETE : aucun resultat n'en depend, donc
+            // aucun risque de justesse. Seuls tid<8 participent (chacun
+            // prefetch 16 mots = 128 octets, 8x16 = le bloc complet),
+            // comme dans le noyau de reference.
+            if(dataIndependent && i + 1 < segmentLength)
+            {
+                uint32_t nextAddrIdx = (i + 1) % 128;
+                // On saute le cas ou le bloc d'adresses devra etre
+                // regenere : la regeneration a lieu en tete du tour
+                // suivant, la valeur lue ici serait perimee.
+                if(nextAddrIdx != 0 && tid < 8)
+                {
+                    uint64_t nextRand = addressBlock[hashSlot][nextAddrIdx];
+                    uint32_t nextRefArea = (slice == 0)
+                        ? i
+                        : (slice * segmentLength + i);
+                    uint32_t nextRand32 = static_cast<uint32_t>(nextRand & 0xFFFFFFFFULL);
+                    uint64_t nrel = nextRand32;
+                    nrel = (nrel * nrel) >> 32;
+                    nrel = nextRefArea - 1 -
+                        ((static_cast<uint64_t>(nextRefArea) * nrel) >> 32);
+                    uint32_t nref = static_cast<uint32_t>(nrel) % mCostKib;
+                    asm volatile(
+                        "prefetch.global.L2 [%0];"
+                        :: "l"(memory + static_cast<size_t>(nref) * 128 + tid * 16)
+                    );
+                }
+            }
+
             // --- fillBlock cooperatif FUSIONNE (shuffle-warp, opti
             // inspiree de compress_block_coop / A82 de seine) : au lieu
             // de 4 sous-rondes separees par une barriere via memoire
