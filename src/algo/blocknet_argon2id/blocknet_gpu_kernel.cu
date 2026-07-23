@@ -284,16 +284,25 @@ __device__ __forceinline__ void nextAddressesCoop(
     uint64_t* __restrict__ zeroBlock, uint64_t* __restrict__ scratchR,
     uint64_t* __restrict__ scratchQ, unsigned int tid);
 
+// A17 : m_cost en constante de compilation. Pour Blocknet il vaut
+// toujours 2097152 (2 GiB / 1 KiB), une puissance de 2 exacte - le
+// compilateur transforme alors les "% mCostKib" en simple masque
+// binaire et les "/ 4" en decalage, au lieu d'une division 64 bits
+// executee a chaque bloc (~2 millions de fois par hachage).
+// MCOST == 0 : chemin generique (tests a petite echelle), la valeur
+// runtime est alors utilisee. Aucun changement d'algorithme.
+template<uint32_t MCOST>
 __global__ void blocknetArgon2idKernel(
     const uint8_t* __restrict__ salt,
     uint32_t saltLen,
     const uint64_t* __restrict__ nonces,
-    uint32_t mCostKib,
+    uint32_t mCostKibRuntime,
     uint32_t activeHashes,
     uint64_t* __restrict__ memoryPool,
     uint8_t* __restrict__ outHashes
 )
 {
+    const uint32_t mCostKib = (MCOST != 0u) ? MCOST : mCostKibRuntime;
     // Nombre de hachages par bloc calcule dynamiquement a partir de
     // la configuration de lancement reelle (blockDim.x / 8), plutot
     // que fige en dur - permet de varier ce paramtre (voir
@@ -986,14 +995,30 @@ void BlocknetGpuHasher::computeBatch()
     unsigned int threadsPerBlock = 32;
     unsigned int blocks = static_cast<unsigned int>(impl_->batchSizeValue);
 
-    blocknetArgon2idKernel<<<blocks, threadsPerBlock>>>(
-        impl_->d_salt, 92,
-        impl_->d_nonces,
-        impl_->mCostKib,
-        static_cast<uint32_t>(impl_->batchSizeValue),
-        impl_->d_memoryPool,
-        impl_->d_outHashes
-    );
+    // Dispatch A17 : chemin specialise (constantes de compilation) pour
+    // la valeur reelle de Blocknet, chemin generique sinon (tests).
+    if(impl_->mCostKib == 2097152u)
+    {
+        blocknetArgon2idKernel<2097152u><<<blocks, threadsPerBlock>>>(
+            impl_->d_salt, 92,
+            impl_->d_nonces,
+            impl_->mCostKib,
+            static_cast<uint32_t>(impl_->batchSizeValue),
+            impl_->d_memoryPool,
+            impl_->d_outHashes
+        );
+    }
+    else
+    {
+        blocknetArgon2idKernel<0u><<<blocks, threadsPerBlock>>>(
+            impl_->d_salt, 92,
+            impl_->d_nonces,
+            impl_->mCostKib,
+            static_cast<uint32_t>(impl_->batchSizeValue),
+            impl_->d_memoryPool,
+            impl_->d_outHashes
+        );
+    }
     cudaError_t launchErr = cudaGetLastError();
     if(launchErr != cudaSuccess)
     {
