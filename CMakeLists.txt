@@ -191,3 +191,21 @@ add_executable(
     src/algo/blocknet_argon2id/blocknet_gpu_kernel.cu
     src/algo/blocknet_argon2id/blocknet_nextaddr_test.cu
 )
+
+# Test de course (issue #1) pour la reconnexion des managers de pool.
+# CPU-only (aucun CUDA) : le bug vit entierement dans le code reseau.
+# Compile sous ThreadSanitizer ; -fno-lto pour ne pas melanger LTO et
+# l'instrumentation TSan. Cible non incluse dans le build par defaut du
+# mineur : se construit explicitement (make pool-race-test).
+add_executable(
+    pool-race-test
+    src/network/pool_race_test.cpp
+    src/network/pool_job_manager.cpp
+    src/network/pool_client.cpp
+    src/network/blocknet_pool_job_manager.cpp
+    src/network/blocknet_pool_client.cpp
+    src/console_output.cpp
+)
+target_compile_options(pool-race-test PRIVATE -fsanitize=thread -fno-lto -g -O1)
+target_link_options(pool-race-test PRIVATE -fsanitize=thread -fno-lto)
+target_link_libraries(pool-race-test pthread)

@@ -3,6 +3,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <cstdlib>
 
 namespace
 {
@@ -38,20 +39,44 @@ BlocknetPoolJobManager::BlocknetPoolJobManager(
     const std::string& worker
 )
 : host_(host), port_(port), wallet_(wallet), worker_(worker)
-, client_(std::make_unique<BlocknetPoolClient>(host, port, wallet, worker))
+, client_(std::make_shared<BlocknetPoolClient>(host, port, wallet, worker))
 {
+}
+
+std::shared_ptr<BlocknetPoolClient> BlocknetPoolJobManager::snapshotClient() const
+{
+    std::lock_guard<std::mutex> lk(clientMutex_);
+    return client_;
 }
 
 BlocknetPoolJobManager::~BlocknetPoolJobManager()
 {
     running_ = false;
-    client_->stop();
-    if(netThread_.joinable()) netThread_.join();
+    {
+        // Stoppe le client courant SOUS le lock : ferme son socket, donc
+        // son run() sort, ce qui debloque le netThread_.join() interne du
+        // watchdog. Le recheck running_ dans watchdogLoop() garantit
+        // qu'aucun nouveau client ne sera publie apres ce point.
+        std::lock_guard<std::mutex> lk(clientMutex_);
+        if(client_) client_->stop();
+    }
+    // Join le watchdog EN PREMIER : quand ce join retourne, watchdogLoop()
+    // a entierement termine et ne touchera plus netThread_. Le join de
+    // netThread_ qui suit est donc sans concurrence (voir issue #1).
     if(watchdogThread_.joinable()) watchdogThread_.join();
+    if(netThread_.joinable()) netThread_.join();
 }
 
 int BlocknetPoolJobManager::reconnectDelaySeconds() const
 {
+    // Delai fixe 60s en production. Surchargeable via la variable
+    // d'environnement KZMINER_RECONNECT_DELAY_SECONDS UNIQUEMENT pour les
+    // tests (ex: 0 pour forcer des reconnexions rapides sous
+    // ThreadSanitizer). Absente en prod -> comportement inchange.
+    if(const char* env = std::getenv("KZMINER_RECONNECT_DELAY_SECONDS"))
+    {
+        return std::atoi(env);
+    }
     return 60;
 }
 
@@ -65,13 +90,18 @@ void BlocknetPoolJobManager::watchdogLoop()
         }
         if(!running_) break;
 
-        if(client_->hadSuccessfulSession())
         {
-            consecutiveFailures_ = 0;
-        }
-        else
-        {
-            if(consecutiveFailures_ < 10) consecutiveFailures_++;
+            // Lecture d'etat de l'ancien client via snapshot (le watchdog
+            // pourrait sinon lire client_ pendant qu'il le remplace).
+            auto old = snapshotClient();
+            if(old && old->hadSuccessfulSession())
+            {
+                consecutiveFailures_ = 0;
+            }
+            else
+            {
+                if(consecutiveFailures_ < 10) consecutiveFailures_++;
+            }
         }
 
         int delay = reconnectDelaySeconds();
@@ -81,10 +111,20 @@ void BlocknetPoolJobManager::watchdogLoop()
         std::this_thread::sleep_for(std::chrono::seconds(delay));
         if(!running_) break;
 
-        client_ = std::make_unique<BlocknetPoolClient>(host_, port_, wallet_, worker_);
-        if(client_->connect())
+        // Client neuf construit + connecte EN LOCAL (invisible des workers) ;
+        // connect() bloquant tenu HORS du lock.
+        auto newClient = std::make_shared<BlocknetPoolClient>(host_, port_, wallet_, worker_);
+        bool ok = newClient->connect();
         {
-            netThread_ = std::thread(&BlocknetPoolClient::run, client_.get());
+            std::lock_guard<std::mutex> lk(clientMutex_);
+            if(!running_) { newClient->stop(); break; }  // teardown en cours : ne pas publier
+            client_ = newClient;                         // publication atomique sous lock
+        }
+        if(ok)
+        {
+            // Capture du shared_ptr par valeur : garde le client vivant
+            // pendant toute la duree de son run().
+            netThread_ = std::thread([newClient](){ newClient->run(); });
         }
         else
         {
@@ -99,18 +139,25 @@ void BlocknetPoolJobManager::watchdogLoop()
 void BlocknetPoolJobManager::start()
 {
     running_ = true;
-    if(!client_->connect())
+    // start() s'execute avant tout worker (voir main.cpp : source->start()
+    // precede launchWorkers()) et avant le spawn du watchdog ci-dessous :
+    // pas de concurrence sur client_ ici, mais on passe par snapshot par
+    // uniformite. connect() bloquant tenu hors du lock (client local).
+    auto c = snapshotClient();
+    if(!c || !c->connect())
     {
         if(consecutiveFailures_ < 10) consecutiveFailures_++;
         pushLogLine("[blocknet] initial connection failed");
     }
-    netThread_ = std::thread(&BlocknetPoolClient::run, client_.get());
+    if(c) netThread_ = std::thread([c](){ c->run(); });
     watchdogThread_ = std::thread(&BlocknetPoolJobManager::watchdogLoop, this);
 }
 
 MiningJob BlocknetPoolJobManager::getJob()
 {
-    BlocknetPoolJob pj = client_->getJob();
+    auto c = snapshotClient();
+    if(!c) return MiningJob{};
+    BlocknetPoolJob pj = c->getJob();
     MiningJob job;
     job.valid         = pj.valid;
     job.job_id        = pj.job_id;
@@ -141,15 +188,19 @@ void BlocknetPoolJobManager::submitNonce(
     // hash calcule, contrairement au comportement solo/pool BTC09 ou
     // le coordinateur/pool reconstruit tout lui-meme sans avoir besoin
     // de notre resultat.
-    client_->submit(job_id, nonce, bytesToHex(hash));
+    auto c = snapshotClient();
+    if(!c) return;
+    c->submit(job_id, nonce, bytesToHex(hash));
 }
 
 uint64_t BlocknetPoolJobManager::getAcceptedCount() const
 {
-    return client_->getAcceptedCount();
+    auto c = snapshotClient();
+    return c ? c->getAcceptedCount() : 0;
 }
 
 uint64_t BlocknetPoolJobManager::getRejectedCount() const
 {
-    return client_->getRejectedCount();
+    auto c = snapshotClient();
+    return c ? c->getRejectedCount() : 0;
 }

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <string>
 #include <memory>
+#include <mutex>
 
 // Implementation de MiningSource pour le protocole pool officiel de
 // Blocknet - meme structure que PoolJobManager (BTC09, pool tiers),
@@ -39,12 +40,21 @@ private:
     std::string wallet_;
     std::string worker_;
 
-    std::unique_ptr<BlocknetPoolClient> client_;
+    // client_ est remplace par le watchdog en cas de reconnexion, pendant
+    // que des threads workers le lisent via getJob()/submitNonce(). shared_ptr
+    // + clientMutex_ + snapshotClient() garantissent qu'un worker garde
+    // l'objet vivant le temps de son appel meme si le watchdog swappe
+    // (voir issue #1 : sans ca, use-after-free).
+    std::shared_ptr<BlocknetPoolClient> client_;
+    mutable std::mutex clientMutex_;
     std::thread netThread_;
     std::thread watchdogThread_;
     std::atomic<bool> running_{false};
     int consecutiveFailures_ = 0;
 
+    // Copie atomique de client_ sous clientMutex_ : maintient l'objet en vie
+    // le temps de l'appel de l'appelant, independamment d'un swap concurrent.
+    std::shared_ptr<BlocknetPoolClient> snapshotClient() const;
     void watchdogLoop();
     int reconnectDelaySeconds() const;
 };

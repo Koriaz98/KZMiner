@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <chrono>
 #include <algorithm>
+#include <cstdlib>
 
 namespace
 {
@@ -39,22 +40,45 @@ PoolJobManager::PoolJobManager(
     const std::string& worker
 )
 : host_(host), port_(port), wallet_(wallet), worker_(worker)
-, client_(std::make_unique<PoolClient>(host, port, wallet, worker))
+, client_(std::make_shared<PoolClient>(host, port, wallet, worker))
 {
+}
+
+std::shared_ptr<PoolClient> PoolJobManager::snapshotClient() const
+{
+    std::lock_guard<std::mutex> lk(clientMutex_);
+    return client_;
 }
 
 PoolJobManager::~PoolJobManager()
 {
     running_ = false;
-    client_->stop();
-    if(netThread_.joinable()) netThread_.join();
+    {
+        // Stoppe le client courant SOUS le lock : ferme son socket, donc
+        // son run() sort, ce qui debloque le netThread_.join() interne du
+        // watchdog. Le recheck running_ dans watchdogLoop() garantit
+        // qu'aucun nouveau client ne sera publie apres ce point.
+        std::lock_guard<std::mutex> lk(clientMutex_);
+        if(client_) client_->stop();
+    }
+    // Join le watchdog EN PREMIER : quand ce join retourne, watchdogLoop()
+    // a entierement termine et ne touchera plus netThread_. Le join de
+    // netThread_ qui suit est donc sans concurrence (voir issue #1).
     if(watchdogThread_.joinable()) watchdogThread_.join();
+    if(netThread_.joinable()) netThread_.join();
 }
 
 int PoolJobManager::reconnectDelaySeconds() const
 {
     // Delai fixe : une tentative de reconnexion toutes les 60s en cas
-    // de deconnexion, jamais plus rapproche.
+    // de deconnexion, jamais plus rapproche. Surchargeable via la
+    // variable d'environnement KZMINER_RECONNECT_DELAY_SECONDS UNIQUEMENT
+    // pour les tests (ex: 0 pour forcer des reconnexions rapides sous
+    // ThreadSanitizer). Absente en prod -> comportement inchange.
+    if(const char* env = std::getenv("KZMINER_RECONNECT_DELAY_SECONDS"))
+    {
+        return std::atoi(env);
+    }
     return 60;
 }
 
@@ -74,13 +98,18 @@ void PoolJobManager::watchdogLoop()
         // acceptent le TCP puis coupent la session peu apres, ce qui
         // ferait sinon repartir le compteur d'echecs a zero a chaque
         // cycle sans jamais laisser le delai progresser.
-        if(client_->hadSuccessfulSession())
         {
-            consecutiveFailures_ = 0;
-        }
-        else
-        {
-            if(consecutiveFailures_ < 10) consecutiveFailures_++;
+            // Lecture d'etat de l'ancien client via snapshot (le watchdog
+            // pourrait sinon lire client_ pendant qu'il le remplace).
+            auto old = snapshotClient();
+            if(old && old->hadSuccessfulSession())
+            {
+                consecutiveFailures_ = 0;
+            }
+            else
+            {
+                if(consecutiveFailures_ < 10) consecutiveFailures_++;
+            }
         }
 
         int delay = reconnectDelaySeconds();
@@ -90,10 +119,20 @@ void PoolJobManager::watchdogLoop()
         std::this_thread::sleep_for(std::chrono::seconds(delay));
         if(!running_) break;
 
-        client_ = std::make_unique<PoolClient>(host_, port_, wallet_, worker_);
-        if(client_->connect())
+        // Client neuf construit + connecte EN LOCAL (invisible des workers) ;
+        // connect() bloquant tenu HORS du lock.
+        auto newClient = std::make_shared<PoolClient>(host_, port_, wallet_, worker_);
+        bool ok = newClient->connect();
         {
-            netThread_ = std::thread(&PoolClient::run, client_.get());
+            std::lock_guard<std::mutex> lk(clientMutex_);
+            if(!running_) { newClient->stop(); break; }  // teardown en cours : ne pas publier
+            client_ = newClient;                         // publication atomique sous lock
+        }
+        if(ok)
+        {
+            // Capture du shared_ptr par valeur : garde le client vivant
+            // pendant toute la duree de son run().
+            netThread_ = std::thread([newClient](){ newClient->run(); });
         }
         else
         {
@@ -108,18 +147,25 @@ void PoolJobManager::watchdogLoop()
 void PoolJobManager::start()
 {
     running_ = true;
-    if(!client_->connect())
+    // start() s'execute avant tout worker (voir main.cpp : source->start()
+    // precede launchWorkers()) et avant le spawn du watchdog ci-dessous :
+    // pas de concurrence sur client_ ici, mais on passe par snapshot par
+    // uniformite. connect() bloquant tenu hors du lock (client local).
+    auto c = snapshotClient();
+    if(!c || !c->connect())
     {
         if(consecutiveFailures_ < 10) consecutiveFailures_++;
         pushLogLine("[pool] initial connection failed");
     }
-    netThread_ = std::thread(&PoolClient::run, client_.get());
+    if(c) netThread_ = std::thread([c](){ c->run(); });
     watchdogThread_ = std::thread(&PoolJobManager::watchdogLoop, this);
 }
 
 MiningJob PoolJobManager::getJob()
 {
-    PoolJob pj = client_->getJob();
+    auto c = snapshotClient();
+    if(!c) return MiningJob{};
+    PoolJob pj = c->getJob();
     MiningJob job;
     job.valid         = pj.valid;
     job.job_id         = pj.job_id;
@@ -142,15 +188,19 @@ void PoolJobManager::submitNonce(
     bool /*isDevFeeJob*/
 )
 {
-    client_->submit(job_id, nonce, bytesToHex(hash));
+    auto c = snapshotClient();
+    if(!c) return;
+    c->submit(job_id, nonce, bytesToHex(hash));
 }
 
 uint64_t PoolJobManager::getAcceptedCount() const
 {
-    return client_->getAcceptedCount();
+    auto c = snapshotClient();
+    return c ? c->getAcceptedCount() : 0;
 }
 
 uint64_t PoolJobManager::getRejectedCount() const
 {
-    return client_->getRejectedCount();
+    auto c = snapshotClient();
+    return c ? c->getRejectedCount() : 0;
 }
