@@ -11,10 +11,13 @@
 #include <memory>
 #include <vector>
 #include <deque>
+#include <sstream>
+#include <iomanip>
 #include <algorithm>
 #include "config/config.h"
 #include "cpu/cpu_miner.h"
 #include "gpu/gpu_miner.h"
+#include "gpu/gpu_device_info.h"
 #include "network/solo_job_manager.h"
 #include "network/pool_job_manager.h"
 #include "network/blocknet_pool_job_manager.h"
@@ -253,6 +256,12 @@ int main(int argc, char **argv)
         gpuDeviceCount = probe.getDeviceCount();
     }
 
+    // Releve une seule fois : la topologie PCI ne change pas en cours
+    // d'execution. Indexe par index CUDA, c'est ce qui permet de
+    // rattacher chaque compteur de hachages a la bonne carte physique.
+    std::vector<CudaPciIdentity> gpuPciIds;
+    if(config.gpuEnabled) gpuPciIds = cudaDeviceIdentities();
+
     int totalWorkers = cpuThreads + gpuDeviceCount;
     if(totalWorkers == 0)
     {
@@ -272,12 +281,37 @@ int main(int argc, char **argv)
     {
         gpuMiner = std::make_unique<GpuMiner>(source.get(), algorithm.get(), config.intensity, cpuThreads, totalWorkers);
         gpuMiner->launchWorkers();
+
+        // Trace la correspondance retenue : c'est elle qui determine sur
+        // quelle ligne du tableau atterrit chaque hashrate, et c'est la
+        // seule facon de verifier depuis les logs que le sous-ensemble
+        // de cartes selectionne par CUDA_VISIBLE_DEVICES est bien celui
+        // attendu. On affiche l'adresse PCI complete ET les deux bases du
+        // bus : nvidia-smi rapporte cette adresse en hexadecimal, la
+        // valeur decimale est celle utilisee en interne comme cle de
+        // jointure (et comme "bus_numbers" cote HiveOS) - les donner
+        // toutes les deux evite toute conversion mentale au moment de
+        // confronter ce log a `nvidia-smi --query-gpu=index,pci.bus_id`.
+        for(int d = 0; d < gpuDeviceCount; d++)
+        {
+            std::ostringstream oss;
+            oss << "GPU CUDA " << d << " -> PCI ";
+            if(d < static_cast<int>(gpuPciIds.size()) && gpuPciIds[d].busDecimal >= 0)
+            {
+                oss << gpuPciIds[d].pciBusId
+                    << " (bus 0x" << std::hex << std::setw(2) << std::setfill('0')
+                    << gpuPciIds[d].busDecimal << std::dec
+                    << " = " << gpuPciIds[d].busDecimal << " decimal)";
+            }
+            else
+            {
+                oss << "unknown (adresse PCI illisible, telemetrie NVML "
+                       "indisponible pour cette carte)";
+            }
+            pushLogLine(oss.str());
+        }
     }
 
-    std::vector<uint64_t> previousGpuHashes(gpuDeviceCount, 0);
-    std::vector<std::chrono::steady_clock::time_point> lastGpuChangeTime(
-        gpuDeviceCount, std::chrono::steady_clock::now()
-    );
     // Fenetre temporelle glissante par GPU : on garde des couples
     // (temps, compteur cumule de hachages) sur ~10s, et on calcule le
     // taux comme (hachages sur la fenetre) / (temps reel de la fenetre).
@@ -331,59 +365,98 @@ int main(int argc, char **argv)
         if(gpuMiner)
         {
             shares += gpuMiner->getShares();
-            std::vector<GpuStats> stats = SystemMonitor::readGpuStats();
-            if(gpuRows.size() != stats.size()) gpuRows.resize(stats.size());
-            // On utilise la POSITION dans la liste (i), pas l'etiquette
-            // nvidia-smi (stats[i].index), pour retrouver le hashrate
-            // interne. Ces deux numerotations divergent des qu'un GPU
-            // est absent/casse (nvidia-smi "saute" son numero, alors
-            // que CUDA renumerote sans trou) ou que
-            // CUDA_VISIBLE_DEVICES restreint les cartes visibles -
-            // situations courantes en minage multi-GPU. Comme KZMiner
-            // force CUDA_DEVICE_ORDER=PCI_BUS_ID en interne (voir plus
-            // haut), l'ORDRE de la liste nvidia-smi correspond bien a
-            // l'ordre interne CUDA, seule l'ETIQUETTE numerique differe -
-            // d'ou l'utilisation de la position plutot que l'etiquette.
-            for(size_t i = 0; i < stats.size(); i++)
-            {
-                gpuRows[i].stats = stats[i];
 
-                uint64_t curr = gpuMiner->getDeviceHashes(static_cast<int>(i));
-                uint64_t prevHash = (i < previousGpuHashes.size())
-                    ? previousGpuHashes[i] : 0;
-                if(i < gpuRateWindow.size())
+            // Jointure par BUS PCI, jamais par index ni par position.
+            // nvidia-smi n'honore pas CUDA_VISIBLE_DEVICES : il liste
+            // toutes les cartes physiques de la machine, avec leurs
+            // numeros d'origine (1, 3, 4...), alors que CUDA ne voit que
+            // les cartes autorisees et les renumerote sans trou
+            // (0, 1, 2...). Les DEUX numerotations divergent donc, y
+            // compris l'ordre - joindre par position collait le hashrate
+            // d'une carte sur la ligne d'une autre, et laissait les
+            // cartes non minees a 0.0 H/s dans le tableau. Le bus PCI
+            // est le seul identifiant commun (KZMiner force
+            // CUDA_DEVICE_ORDER=PCI_BUS_ID, voir plus haut).
+            std::vector<GpuStats> stats = SystemMonitor::readGpuStats();
+
+            // Une ligne par device CUDA, et uniquement ceux-la : les
+            // cartes que ce process ne mine pas n'ont rien a faire ici.
+            if(static_cast<int>(gpuRows.size()) != gpuDeviceCount)
+            {
+                gpuRows.assign(static_cast<size_t>(gpuDeviceCount), GpuRow{});
+            }
+
+            for(int d = 0; d < gpuDeviceCount; d++)
+            {
+                GpuRow &row = gpuRows[static_cast<size_t>(d)];
+                row.cudaIndex = d;
+                row.pciBusDecimal = (d < static_cast<int>(gpuPciIds.size()))
+                    ? gpuPciIds[static_cast<size_t>(d)].busDecimal : -1;
+
+                row.telemetryAvailable = false;
+                if(row.pciBusDecimal >= 0)
+                {
+                    for(const auto &s : stats)
+                    {
+                        if(s.pciBusDecimal == row.pciBusDecimal)
+                        {
+                            row.stats = s;
+                            row.telemetryAvailable = true;
+                            break;
+                        }
+                    }
+                }
+
+                if(!row.telemetryAvailable)
+                {
+                    // Pas de correspondance NVML : on garde quand meme
+                    // la ligne (son hashrate vient de CUDA et reste
+                    // juste), avec un repli sur l'index CUDA comme
+                    // numero affiche.
+                    row.stats = GpuStats{};
+                    row.stats.index = d;
+                }
+                if(row.pciBusDecimal >= 0)
+                {
+                    // Aussi utilise comme "bus_numbers" par HiveOS via
+                    // status_json / h-stats.sh, d'ou le renseignement
+                    // meme sans telemetrie.
+                    row.stats.pciBusDecimal = row.pciBusDecimal;
+                }
+
+                uint64_t curr = gpuMiner->getDeviceHashes(d);
+                size_t w = static_cast<size_t>(d);
+                if(w < gpuRateWindow.size())
                 {
                     // On enregistre le point courant (temps, compteur cumule).
-                    gpuRateWindow[i].push_back({now, curr});
+                    gpuRateWindow[w].push_back({now, curr});
                     // On purge les points plus vieux que la fenetre, mais on
                     // garde toujours au moins le plus ancien point encore utile
                     // pour avoir une base de comparaison des le debut.
-                    while(gpuRateWindow[i].size() > 2)
+                    while(gpuRateWindow[w].size() > 2)
                     {
                         double age = std::chrono::duration<double>(
-                            now - gpuRateWindow[i].front().t).count();
+                            now - gpuRateWindow[w].front().t).count();
                         double ageNext = std::chrono::duration<double>(
-                            now - gpuRateWindow[i][1].t).count();
+                            now - gpuRateWindow[w][1].t).count();
                         // On retire le plus ancien seulement si le suivant
                         // couvre encore toute la fenetre (evite de trop
                         // raccourcir la base de mesure).
                         if(age > kRateWindowSeconds && ageNext >= kRateWindowSeconds)
-                            gpuRateWindow[i].pop_front();
+                            gpuRateWindow[w].pop_front();
                         else
                             break;
                     }
                     // Taux = hachages accumules sur la fenetre / temps reel
                     // ecoule entre le plus ancien point et maintenant.
-                    const auto& oldest = gpuRateWindow[i].front();
+                    const auto& oldest = gpuRateWindow[w].front();
                     double windowElapsed = std::chrono::duration<double>(
                         now - oldest.t).count();
                     if(windowElapsed >= 0.5 && curr >= oldest.hashes)
                     {
-                        gpuRows[i].hashrate =
+                        row.hashrate =
                             static_cast<double>(curr - oldest.hashes) / windowElapsed;
                     }
-                    previousGpuHashes[i] = curr;
-                    lastGpuChangeTime[i] = now;
                 }
             }
         }

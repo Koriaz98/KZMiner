@@ -74,6 +74,7 @@ add_executable(
     src/config/config.cpp
     src/cpu/cpu_miner.cpp
     src/gpu/gpu_miner.cpp
+    src/gpu/gpu_device_info.cu
     src/argon2/argon2_engine.cpp
     src/algo/argon2id/argon2id_algorithm.cpp
     src/algo/argon2id/argon2id_gpu_hasher.cpp

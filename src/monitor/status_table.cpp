@@ -162,30 +162,40 @@ namespace
             for(const auto &row : data.gpuRows)
             {
                 const auto &g = row.stats;
+                bool has = row.telemetryAvailable;
 
                 std::ostringstream vram;
-                vram << static_cast<int>(g.memUsedMiB) << "/" << static_cast<int>(g.memTotalMiB) << "MiB";
+                if(has) vram << static_cast<int>(g.memUsedMiB) << "/" << static_cast<int>(g.memTotalMiB) << "MiB";
+                else vram << "N/A";
 
                 std::ostringstream fan;
-                if(g.fanPercent >= 0) fan << g.fanPercent << "%"; else fan << "N/A";
+                if(has && g.fanPercent >= 0) fan << g.fanPercent << "%"; else fan << "N/A";
 
-                std::string tempStr = fmtGpuTemp(g.tempCelsius);
-                std::string tempPlain = fmtTemp(g.tempCelsius);
+                std::string tempStr = has ? fmtGpuTemp(g.tempCelsius) : std::string("N/A");
+                std::string tempPlain = has ? fmtTemp(g.tempCelsius) : std::string("N/A");
                 std::string tempPadded = tempStr;
                 if(tempPlain.size() < 9)
                 {
                     tempPadded += std::string(9 - tempPlain.size(), ' ');
                 }
 
+                // Numero affiche : la position PHYSIQUE de la carte
+                // (etiquette nvidia-smi), pas l'index CUDA compacte -
+                // c'est le numero que l'utilisateur retrouve dans
+                // nvidia-smi et HiveOS. Repli sur l'index CUDA quand la
+                // telemetrie NVML est indisponible.
+                int displayIndex = has ? g.index : row.cudaIndex;
+                std::string nameCell = has ? g.name : std::string("(no nvidia-smi data)");
+
                 out
-                    << " " << std::left << std::setw(4) << g.index << "| "
-                    << kBlue << [&]{ std::string n = g.name.substr(0, 28); n.resize(28, ' '); return n; }() << kReset << " | "
+                    << " " << std::left << std::setw(4) << displayIndex << "| "
+                    << kBlue << [&]{ std::string n = nameCell.substr(0, 28); n.resize(28, ' '); return n; }() << kReset << " | "
                     << kGreen << std::left << std::setw(13) << (fmtHashrate(row.hashrate) + " H/s") << kReset << " | "
                     << tempPadded << "| "
-                    << std::left << std::setw(7) << (std::to_string(g.utilPercent) + "%") << "| "
+                    << std::left << std::setw(7) << (has ? (std::to_string(g.utilPercent) + "%") : std::string("N/A")) << "| "
                     << std::left << std::setw(20) << vram.str() << "| "
                     << std::left << std::setw(7) << fan.str() << "| "
-                    << std::left << std::setw(8) << (std::to_string(static_cast<int>(g.powerWatts)) + "W")
+                    << std::left << std::setw(8) << (has ? (std::to_string(static_cast<int>(g.powerWatts)) + "W") : std::string("N/A"))
                     << "\n";
             }
 

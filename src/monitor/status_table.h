@@ -8,6 +8,18 @@ struct GpuRow
 {
     GpuStats stats;
     double hashrate = 0.0;
+    // Index CUDA compacte (0..N-1) : la cle de getDeviceHashes(). Ne
+    // coincide avec la numerotation physique que si toutes les cartes
+    // de la machine sont utilisees par ce process.
+    int cudaIndex = -1;
+    // Partie "bus" de l'adresse PCI en decimal - seul identifiant
+    // stable entre numerotation CUDA et NVML, donc cle de jointure.
+    int pciBusDecimal = -1;
+    // false quand aucune ligne nvidia-smi ne correspond a ce bus PCI
+    // (nvidia-smi absent ou en echec) : on affiche alors le hashrate,
+    // qui vient de CUDA et reste juste, et "N/A" partout ailleurs
+    // plutot que des zeros qu'on lirait a tort comme une carte au repos.
+    bool telemetryAvailable = false;
 };
 
 struct DashboardData
