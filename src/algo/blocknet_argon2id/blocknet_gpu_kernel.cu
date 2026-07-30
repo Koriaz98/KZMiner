@@ -328,7 +328,24 @@ __global__ void blocknetArgon2idKernel(
     __shared__ uint64_t blockTmp[1][128];
     __shared__ uint64_t addressBlock[1][128];
     __shared__ uint64_t inputBlock[1][128];
-    __shared__ uint64_t zeroBlockShared[128];  // bloc de zeros pour nextAddressesCoop
+    __shared__ uint64_t zeroBlockShared[128];
+    // Le bloc "prev" d'une iteration est TOUJOURS le bloc ecrit a
+    // l'iteration precedente (prevOffset suit currOffset). On le garde
+    // donc en memoire partagee au lieu de le relire en memoire globale :
+    // supprime la moitie des lectures globales du chemin chaud et
+    // remplace une latence globale (~200-400 cycles) par une latence
+    // partagee (~30 cycles). Noyau limite par la latence, pas par la
+    // bande passante -> c'est le bon levier.
+    // Hypothese de correction : t_cost=1, single pass (voir put32(1) plus
+    // bas, aucune boucle de passes autour du for(slice...)). Sous cette
+    // hypothese, le correctif de wrap sPrevOffset (ligne ~439,
+    // "sCurrOffset % mCostKib == 1") ne se declenche jamais dans ce
+    // codepath (slice 0 demarre a l'index 2) et prevShared reste
+    // toujours synchrone avec le vrai bloc precedent. Si t_cost>1 est
+    // introduit un jour, ce correctif redevient actif et prevShared
+    // DOIT etre revalide (verifier qu'il est resynchronise au moment
+    // ou sPrevOffset est corrige, pas seulement incremente).
+    __shared__ uint64_t prevShared[128];  // bloc "prev" du chemin chaud, cache smem
     __shared__ uint32_t sCurrOffset[1];
     __shared__ uint32_t sPrevOffset[1];
     __shared__ uint32_t sRefIndex[1];
@@ -404,6 +421,14 @@ __global__ void blocknetArgon2idKernel(
             sPrevOffset[hashSlot] = (sCurrOffset[hashSlot] == 0) ? (mCostKib - 1) : (sCurrOffset[hashSlot] - 1);
         }
         __syncwarp(0xFFFFFFFFU);
+        {
+            const uint64_t* p0 = memory + static_cast<size_t>(sPrevOffset[hashSlot]) * 128;
+            prevShared[tid]    = p0[tid];
+            prevShared[tid+32] = p0[tid+32];
+            prevShared[tid+64] = p0[tid+64];
+            prevShared[tid+96] = p0[tid+96];
+        }
+        __syncwarp(0xFFFFFFFFU);
 
         for(uint32_t i = startingIndex; i < segmentLength; i++)
         {
@@ -430,7 +455,7 @@ __global__ void blocknetArgon2idKernel(
                 }
                 else
                 {
-                    pseudoRand = memory[static_cast<size_t>(sPrevOffset[hashSlot]) * 128];
+                    pseudoRand = prevShared[0];
                 }
 
                 uint32_t referenceAreaSize = (slice == 0)
@@ -490,14 +515,13 @@ __global__ void blocknetArgon2idKernel(
             // NB : phase "groupes contigus (16*state)" EN PREMIER (ce que
             // ref.c fait en premier), puis phase "motif espace (2*state)".
             const uint64_t* ref = memory + static_cast<size_t>(sRefIndex[hashSlot]) * 128;
-            const uint64_t* prev = memory + static_cast<size_t>(sPrevOffset[hashSlot]) * 128;
             uint64_t* br = blockR[hashSlot];
             uint64_t* bt = blockTmp[hashSlot];
             {
-                uint64_t x0 = ref[tid]    ^ prev[tid];
-                uint64_t x1 = ref[tid+32] ^ prev[tid+32];
-                uint64_t x2 = ref[tid+64] ^ prev[tid+64];
-                uint64_t x3 = ref[tid+96] ^ prev[tid+96];
+                uint64_t x0 = ref[tid]    ^ prevShared[tid];
+                uint64_t x1 = ref[tid+32] ^ prevShared[tid+32];
+                uint64_t x2 = ref[tid+64] ^ prevShared[tid+64];
+                uint64_t x3 = ref[tid+96] ^ prevShared[tid+96];
                 br[tid]=x0; bt[tid]=x0;
                 br[tid+32]=x1; bt[tid+32]=x1;
                 br[tid+64]=x2; bt[tid+64]=x2;
@@ -557,10 +581,16 @@ __global__ void blocknetArgon2idKernel(
             }
 
             uint64_t* curr = memory + static_cast<size_t>(sCurrOffset[hashSlot]) * 128;
-            curr[tid]    = bt[tid]    ^ br[tid];
-            curr[tid+32] = bt[tid+32] ^ br[tid+32];
-            curr[tid+64] = bt[tid+64] ^ br[tid+64];
-            curr[tid+96] = bt[tid+96] ^ br[tid+96];
+            {
+                uint64_t c0 = bt[tid]    ^ br[tid];
+                uint64_t c1 = bt[tid+32] ^ br[tid+32];
+                uint64_t c2 = bt[tid+64] ^ br[tid+64];
+                uint64_t c3 = bt[tid+96] ^ br[tid+96];
+                curr[tid]=c0; curr[tid+32]=c1; curr[tid+64]=c2; curr[tid+96]=c3;
+                // curr devient le prev de l'iteration suivante.
+                prevShared[tid]=c0; prevShared[tid+32]=c1;
+                prevShared[tid+64]=c2; prevShared[tid+96]=c3;
+            }
             __syncwarp(0xFFFFFFFFU);
 
             if(tid == 0)
