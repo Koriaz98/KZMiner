@@ -66,7 +66,13 @@ private:
     std::atomic<bool> running_{false};
     std::mutex jobMutex_;
     BlocknetPoolJob currentJob_;
-    int requestId_ = 2; // id=1 reserve au login
+    // submit() est appele concurremment par plusieurs workers (chaque
+    // thread CPU, chaque worker GPU). requestId_ atomique (sinon data
+    // race sur l'increment) ; sendMutex_ serialise tous les envois socket
+    // (login + submits) pour empecher l'entrelacement des lignes JSON sur
+    // le fil, qui corromprait le protocole (suspect des duplicate shares).
+    std::atomic<int> requestId_{2}; // id=1 reserve au login
+    std::mutex sendMutex_;
 
     void sendJson(const std::string& payload);
     void handleLine(const std::string& line);

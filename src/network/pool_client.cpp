@@ -88,6 +88,10 @@ bool PoolClient::connect()
 
 void PoolClient::sendJson(const std::string& payload)
 {
+    // Serialise les envois : deux submit() concurrents (workers distincts)
+    // ne doivent pas entrelacer les octets de leurs lignes JSON sur le
+    // socket, sinon le pool recoit du JSON corrompu.
+    std::lock_guard<std::mutex> lk(sendMutex_);
     std::string line = payload + "\n";
     ssize_t sent = send(sock_, line.c_str(), line.size(), MSG_NOSIGNAL);
     if(sent < 0)
