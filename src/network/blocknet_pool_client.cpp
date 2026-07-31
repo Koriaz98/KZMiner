@@ -99,7 +99,7 @@ bool BlocknetPoolClient::connect()
     return true;
 }
 
-void BlocknetPoolClient::sendJson(const std::string& payload)
+bool BlocknetPoolClient::sendJson(const std::string& payload)
 {
     // Serialise les envois : deux submit() concurrents (workers distincts)
     // ne doivent pas entrelacer les octets de leurs lignes JSON sur le
@@ -110,7 +110,9 @@ void BlocknetPoolClient::sendJson(const std::string& payload)
     if(sent < 0)
     {
         pushLogLine(sourceLabel() + " send failed");
+        return false;
     }
+    return true;
 }
 
 void BlocknetPoolClient::run()
@@ -262,7 +264,7 @@ BlocknetPoolJob BlocknetPoolClient::getJob()
     return currentJob_;
 }
 
-void BlocknetPoolClient::submit(
+bool BlocknetPoolClient::submit(
     const std::string& job_id,
     uint64_t nonce,
     const std::string& claimedHashHex
@@ -274,7 +276,7 @@ void BlocknetPoolClient::submit(
     sub["params"]["job_id"] = job_id;
     sub["params"]["nonce"] = nonce;
     sub["params"]["claimed_hash"] = claimedHashHex;
-    sendJson(sub.dump());
+    return sendJson(sub.dump());
 }
 
 void BlocknetPoolClient::stop()

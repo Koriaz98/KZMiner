@@ -33,7 +33,9 @@ public:
 
     PoolJob getJob();
 
-    void submit(
+    // Renvoie true si la ligne a ete envoyee avec succes sur le socket
+    // (false = echec d'envoi, la soumission n'a pas atteint le pool).
+    bool submit(
         const std::string& job_id,
         uint64_t nonce,
         const std::string& hashHex
@@ -72,6 +74,6 @@ private:
     std::atomic<int> requestId_{2}; // id=1 reserve au login
     std::mutex sendMutex_;
 
-    void sendJson(const std::string& payload);
+    bool sendJson(const std::string& payload);
     void handleLine(const std::string& line);
 };

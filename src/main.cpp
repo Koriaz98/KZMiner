@@ -344,14 +344,12 @@ int main(int argc, char **argv)
 
         auto now = std::chrono::steady_clock::now();
 
-        uint64_t shares = 0;
         double cpuRate = lastDashboard.cpuHashrate;
         std::vector<GpuRow> gpuRows = lastDashboard.gpuRows;
 
         if(cpuMiner)
         {
             uint64_t currCpu = cpuMiner->getHashes();
-            shares += cpuMiner->getShares();
             if(currCpu != previousCpuHashes)
             {
                 double elapsed = std::chrono::duration<double>(now - lastCpuChangeTime).count();
@@ -364,7 +362,6 @@ int main(int argc, char **argv)
 
         if(gpuMiner)
         {
-            shares += gpuMiner->getShares();
 
             // Jointure par BUS PCI, jamais par index ni par position.
             // nvidia-smi n'honore pas CUDA_VISIBLE_DEVICES : il liste
@@ -466,9 +463,10 @@ int main(int argc, char **argv)
         DashboardData dashboard;
         dashboard.totalHashrate = cpuRate;
         for(const auto &row : gpuRows) dashboard.totalHashrate += row.hashrate;
-        dashboard.shares = shares;
+        dashboard.shares = source->getSubmittedCount();
         dashboard.accepted = source->getAcceptedCount();
         dashboard.rejected = source->getRejectedCount();
+        dashboard.sendFailed = source->getSendFailedCount();
         dashboard.difficulty = job.difficulty;
         dashboard.height = job.height;
         dashboard.cpuThreads = cpuMiner ? cpuMiner->getThreadCount() : 0;

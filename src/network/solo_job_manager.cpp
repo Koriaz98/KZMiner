@@ -157,6 +157,7 @@ void SoloJobManager::submitNonce(
     bool /*isDevFeeJob*/
 )
 {
+    submittedCount_++;
     auto result = client_.submitNonce(job_id, nonce);
 
     if(result.ok)

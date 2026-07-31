@@ -31,10 +31,18 @@ public:
         bool isDevFeeJob
     ) override;
 
+    // Solo : soumission HTTP synchrone (pas de "pending", pas de reconnexion
+    // qui reinitialise), donc submitted = accepted + rejected. sendFailed
+    // reste 0 : un echec reseau HTTP est deja comptabilise en rejected par
+    // WorkClient (comportement inchange). Interface exposee comme en pool
+    // pour une semantique identique cote affichage.
+    uint64_t getSubmittedCount() const override { return submittedCount_.load(); }
     uint64_t getAcceptedCount() const override { return acceptedCount_.load(); }
     uint64_t getRejectedCount() const override { return rejectedCount_.load(); }
+    uint64_t getSendFailedCount() const override { return 0; }
 
 private:
+    std::atomic<uint64_t> submittedCount_{0};
     std::atomic<uint64_t> acceptedCount_{0};
     std::atomic<uint64_t> rejectedCount_{0};
     std::string worker_;

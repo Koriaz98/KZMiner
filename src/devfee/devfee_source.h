@@ -26,8 +26,10 @@ public:
 
     // Reflete uniquement les shares du wallet utilisateur (le wallet
     // dev fee n'a pas vocation a etre suivi par l'utilisateur).
+    uint64_t getSubmittedCount() const override { return userSource_->getSubmittedCount(); }
     uint64_t getAcceptedCount() const override { return userSource_->getAcceptedCount(); }
     uint64_t getRejectedCount() const override { return userSource_->getRejectedCount(); }
+    uint64_t getSendFailedCount() const override { return userSource_->getSendFailedCount(); }
 
 private:
     std::unique_ptr<MiningSource> userSource_;

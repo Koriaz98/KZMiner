@@ -118,6 +118,15 @@ void BlocknetPoolJobManager::watchdogLoop()
         {
             std::lock_guard<std::mutex> lk(clientMutex_);
             if(!running_) { newClient->stop(); break; }  // teardown en cours : ne pas publier
+            // Replie les comptes du client sortant (deja quiescent : son
+            // run() a ete joint en tete de boucle) dans la base, sous le
+            // MEME lock que getAccepted/RejectedCount() -> le swap est
+            // tout-ou-rien pour les lecteurs, pas de double comptage.
+            if(client_)
+            {
+                acceptedBase_ += client_->getAcceptedCount();
+                rejectedBase_ += client_->getRejectedCount();
+            }
             client_ = newClient;                         // publication atomique sous lock
         }
         if(ok)
@@ -189,18 +198,32 @@ void BlocknetPoolJobManager::submitNonce(
     // le coordinateur/pool reconstruit tout lui-meme sans avoir besoin
     // de notre resultat.
     auto c = snapshotClient();
-    if(!c) return;
-    c->submit(job_id, nonce, bytesToHex(hash));
+    if(c && c->submit(job_id, nonce, bytesToHex(hash)))
+        submitted_.fetch_add(1, std::memory_order_relaxed);
+    else
+        sendFailed_.fetch_add(1, std::memory_order_relaxed);
+}
+
+uint64_t BlocknetPoolJobManager::getSubmittedCount() const
+{
+    return submitted_.load(std::memory_order_relaxed);
 }
 
 uint64_t BlocknetPoolJobManager::getAcceptedCount() const
 {
-    auto c = snapshotClient();
-    return c ? c->getAcceptedCount() : 0;
+    // Meme lock que le pliage au swap (watchdogLoop) : base + client courant
+    // lus atomiquement -> jamais l'ancien client compte deux fois.
+    std::lock_guard<std::mutex> lk(clientMutex_);
+    return acceptedBase_ + (client_ ? client_->getAcceptedCount() : 0);
 }
 
 uint64_t BlocknetPoolJobManager::getRejectedCount() const
 {
-    auto c = snapshotClient();
-    return c ? c->getRejectedCount() : 0;
+    std::lock_guard<std::mutex> lk(clientMutex_);
+    return rejectedBase_ + (client_ ? client_->getRejectedCount() : 0);
+}
+
+uint64_t BlocknetPoolJobManager::getSendFailedCount() const
+{
+    return sendFailed_.load(std::memory_order_relaxed);
 }

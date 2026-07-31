@@ -43,9 +43,17 @@ public:
         bool isDevFeeJob
     ) = 0;
 
-    // Statistiques de soumission confirmees par le serveur (pool ou
-    // coordinateur solo). Par defaut a 0 : seules les sources qui
-    // suivent reellement ces compteurs (mode pool) les redefinissent.
+    // Compteurs de shares, sur toute la duree du run et survivant aux
+    // reconnexions, pour le wallet utilisateur uniquement (le dev fee
+    // n'est pas suivi cote affichage). Semantique commune a tous les
+    // modes (solo/pool) :
+    //   submitted = shares reellement ENVOYEES avec succes au pool/coordinateur
+    //   accepted / rejected = verdicts du serveur
+    //   sendFailed = soumissions dont l'envoi a echoue (jamais arrivees)
+    //   pending (non expose) = submitted - accepted - rejected (en vol, transitoire)
+    // Par defaut a 0 : chaque source concrete redefinit ce qu'elle suit.
+    virtual uint64_t getSubmittedCount() const { return 0; }
     virtual uint64_t getAcceptedCount() const { return 0; }
     virtual uint64_t getRejectedCount() const { return 0; }
+    virtual uint64_t getSendFailedCount() const { return 0; }
 };

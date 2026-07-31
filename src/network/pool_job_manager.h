@@ -28,8 +28,10 @@ public:
         bool isDevFeeJob
     ) override;
 
+    uint64_t getSubmittedCount() const override;
     uint64_t getAcceptedCount() const override;
     uint64_t getRejectedCount() const override;
+    uint64_t getSendFailedCount() const override;
 
 private:
     std::string host_;
@@ -48,6 +50,18 @@ private:
     std::thread watchdogThread_;
     std::atomic<bool> running_{false};
     int consecutiveFailures_ = 0;
+
+    // Compteurs de shares survivant aux reconnexions (les compteurs bruts
+    // vivent dans le client, detruit/recree a chaque reconnexion).
+    // submitted_/sendFailed_ : comptes dans submitNonce() (threads workers)
+    // -> atomiques. acceptedBase_/rejectedBase_ : comptes des clients deja
+    // remplaces, replies au swap ; accedes UNIQUEMENT sous clientMutex_
+    // (meme lock que le pliage) pour que le swap soit tout-ou-rien vis-a-vis
+    // des lecteurs (pas de double comptage).
+    std::atomic<uint64_t> submitted_{0};
+    std::atomic<uint64_t> sendFailed_{0};
+    uint64_t acceptedBase_ = 0;
+    uint64_t rejectedBase_ = 0;
 
     // Copie atomique de client_ sous clientMutex_ : maintient l'objet en vie
     // le temps de l'appel de l'appelant, independamment d'un swap concurrent.

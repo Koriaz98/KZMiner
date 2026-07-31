@@ -99,7 +99,15 @@ namespace
             << kBold << "UPTIME" << kReset << " " << kYellow << fmtUptime(data.uptimeSeconds) << kReset
             << "  |  " << kBold << "SHARES" << kReset << " " << kGreen << data.shares << kReset
             << " (" << kGreen << data.accepted << " accepted" << kReset
-            << ", " << kRed << data.rejected << " rejected" << kReset << ")";
+            << ", " << kRed << data.rejected << " rejected" << kReset;
+        // "failed" (echecs d'envoi) affiche seulement si non nul : propre
+        // par defaut, informatif quand ca compte. L'ecart eventuel
+        // SHARES - accepted - rejected - failed = shares en vol (transitoire).
+        if(data.sendFailed > 0)
+        {
+            out << ", " << kRed << data.sendFailed << " failed" << kReset;
+        }
+        out << ")";
 
         // En solo, "accepted" represente deja des blocs entiers valides
         // (pas des parts partielles comme en pool) - ce compteur
