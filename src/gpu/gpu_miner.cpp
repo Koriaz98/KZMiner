@@ -175,7 +175,6 @@ void GpuMiner::worker(int deviceIndex, int globalId)
 
                 if(std::memcmp(hashBuf.data(), job.target.data(), 32) <= 0)
                 {
-                    sharesFound++;
                     source_->submitNonce(job.job_id, nonce + i, hashBuf, job.height, job.isDevFeeJob);
                 }
             }

@@ -78,7 +78,6 @@ void CPUMiner::worker(int cpuId)
 
         if(std::memcmp(result.data(), job.target.data(), 32) <= 0)
         {
-            sharesFound++;
             // Soumettre avec le job_id du job REELLEMENT hashe (job,
             // capture au debut de ce cycle) - PAS un job fraichement
             // recupere ici, qui pourrait deja avoir change entre-temps
