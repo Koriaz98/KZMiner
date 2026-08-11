@@ -2,6 +2,7 @@
 #include "../algo/algorithm.h"
 #include "../console_output.h"
 #include "../network/mining_source.h"
+#include "../nonce_resume.h"
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -31,6 +32,11 @@ void CPUMiner::worker(int cpuId)
     uint64_t nonce = 0;
     uint64_t rangeStart = 0;
     uint64_t rangeEnd = 0;
+    // Cache LRU par worker (thread-local, aucune synchro) : voir
+    // nonce_resume.h. Permet de REPRENDRE un job retrouve apres une
+    // excursion dev fee au lieu de le re-hacher depuis le debut (source
+    // des duplicate shares).
+    NonceResumeCache resumeCache;
 
     while(true)
     {
@@ -43,13 +49,13 @@ void CPUMiner::worker(int cpuId)
 
         if(job.job_id != lastJobId)
         {
-            // Detection du changement de job basee sur job_id (garanti
-            // unique par construction), pas sur les octets de l'entete -
-            // chez certains coins (Blocknet notamment), l'entete/salt
-            // peut rester identique entre plusieurs jobs successifs
-            // distincts (nonce_start/nonce_end differents malgre tout),
-            // ce qui ferait echouer une detection basee uniquement sur
-            // les octets et ferait perdurer une plage de nonce perimee.
+            // Changement de job (detecte par job_id, garanti unique). On
+            // sauvegarde d'abord la progression du job SORTANT, puis on
+            // calcule la sous-fenetre du job entrant, et on REPREND son
+            // nonce s'il est connu (retour apres bascule dev fee) plutot
+            // que de repartir de rangeStart - c'est ce reset qui rejouait
+            // les memes nonces et resoumettait les memes shares.
+            if(!lastJobId.empty()) resumeCache.store(lastJobId, nonce);
             lastJobId = job.job_id;
             if(job.nonce_end != 0)
             {
@@ -65,7 +71,8 @@ void CPUMiner::worker(int cpuId)
                 rangeStart = (static_cast<uint64_t>(globalId) << 56);
                 rangeEnd   = (static_cast<uint64_t>(globalId) + 1) << 56;
             }
-            nonce = rangeStart;
+            const uint64_t* resume = resumeCache.find(job.job_id);
+            nonce = resume ? *resume : rangeStart;
         }
 
         std::vector<uint8_t> result = algorithm_->hashCpu(

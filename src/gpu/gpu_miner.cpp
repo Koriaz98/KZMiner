@@ -3,6 +3,7 @@
 #include "../network/mining_source.h"
 #include "../algo/algorithm.h"
 #include "../console_output.h"
+#include "../nonce_resume.h"
 
 #include <sstream>
 #include <thread>
@@ -118,6 +119,10 @@ void GpuMiner::worker(int deviceIndex, int globalId)
         std::string lastJobId;
         uint64_t rangeStart = 0, rangeEnd = 0, nonce = 0;
         std::vector<uint8_t> hashBuf(32);
+        // Cache LRU par worker (thread-local, aucune synchro, voir
+        // nonce_resume.h) : reprise d'un job retrouve apres une bascule
+        // dev fee au lieu d'un re-hachage depuis le debut (duplicate).
+        NonceResumeCache resumeCache;
 
         while(true)
         {
@@ -140,9 +145,13 @@ void GpuMiner::worker(int deviceIndex, int globalId)
                 // qui ferait echouer une detection basee uniquement
                 // sur les octets et ferait perdurer une plage de
                 // nonce perimee.
+                // Sauvegarde la progression du job SORTANT avant de
+                // basculer (voir plus bas : reprise a l'entree).
+                if(!lastJobId.empty()) resumeCache.store(lastJobId, nonce);
                 lastJobId = job.job_id;
                 // No-op pour les algorithmes a sel fixe (BTC09) - reel
-                // pour ceux a sel variable par job (Blocknet).
+                // pour ceux a sel variable par job (Blocknet). Toujours
+                // appele : garantit qu'on hache le bon header courant.
                 hasher->setSalt(job.header.data(), job.header.size());
 
                 if(job.nonce_end != 0)
@@ -158,7 +167,11 @@ void GpuMiner::worker(int deviceIndex, int globalId)
                     rangeStart = (static_cast<uint64_t>(globalId) << 56);
                     rangeEnd   = (static_cast<uint64_t>(globalId) + 1) << 56;
                 }
-                nonce = rangeStart;
+                // REPRISE : si on retrouve ce job_id (retour apres une
+                // excursion dev fee), on repart du nonce laisse, sinon du
+                // debut de la sous-fenetre. Evite de re-hacher/resoumettre.
+                const uint64_t* resume = resumeCache.find(job.job_id);
+                nonce = resume ? *resume : rangeStart;
             }
 
             for(size_t i = 0; i < batchSize; i++)
