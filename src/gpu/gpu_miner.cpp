@@ -65,12 +65,13 @@ void GpuMiner::worker(int deviceIndex, int globalId)
         pushLogLine("GPU " + std::to_string(deviceIndex) + ": initializing...");
 
         MiningJob job;
-        while(true)
+        while(!stop_)
         {
             job = source_->getJob();
             if(job.valid && job.header.size() == algorithm_->inputSize() && job.target.size() == 32) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
+        if(stop_) return;  // arret demande avant meme d'avoir un job/hasher
 
         size_t freeBytes = 0, totalBytes = 0;
         algorithm_->queryGpuMemory(deviceIndex, freeBytes, totalBytes);
@@ -80,7 +81,7 @@ void GpuMiner::worker(int deviceIndex, int globalId)
         // memoire cote driver sans que ce soit encore visible. On
         // reessaie quelques fois avant de figer un batch-size trop
         // petit pour toute la duree de vie du thread.
-        for(int retry = 0; retry < 5 && totalBytes > 0 && freeBytes < totalBytes / 2; retry++)
+        for(int retry = 0; retry < 5 && !stop_ && totalBytes > 0 && freeBytes < totalBytes / 2; retry++)
         {
             std::ostringstream oss;
             oss << "GPU " << deviceIndex << ": only "
@@ -88,9 +89,13 @@ void GpuMiner::worker(int deviceIndex, int globalId)
                 << (totalBytes / (1024*1024)) << " MiB total, retrying VRAM check in 3s ("
                 << (retry + 1) << "/5)...";
             pushLogLine(oss.str());
-            std::this_thread::sleep_for(std::chrono::seconds(3));
+            // Sleep fractionne : reagit a un arret demande pendant l'attente
+            // VRAM au lieu de bloquer 3s dans le handler-less shutdown.
+            for(int s = 0; s < 30 && !stop_; s++)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             algorithm_->queryGpuMemory(deviceIndex, freeBytes, totalBytes);
         }
+        if(stop_) return;
 
         size_t usableBytes = (freeBytes > kVramReserveBytes)
             ? (freeBytes - kVramReserveBytes) : 0;
@@ -124,7 +129,10 @@ void GpuMiner::worker(int deviceIndex, int globalId)
         // dev fee au lieu d'un re-hachage depuis le debut (duplicate).
         NonceResumeCache resumeCache;
 
-        while(true)
+        // Arret verifie ENTRE deux batches : aucun kernel Argon2id n'est en
+        // vol au moment ou l'on sort, donc la destruction du hasher (fin de
+        // scope) fait un cudaFree propre - pas de contexte CUDA orphelin.
+        while(!stop_)
         {
             job = source_->getJob();
 
@@ -234,10 +242,12 @@ void GpuMiner::launchWorkers()
 
     pushLogLine("GPUs detected: " + std::to_string(deviceCount));
 
+    // Threads conserves (pas .detach()) pour pouvoir les JOINDRE a l'arret
+    // et garantir la destruction propre des hashers/contextes CUDA.
     for(int d = 0; d < deviceCount; d++)
     {
         int globalId = workerOffset_ + d;
-        std::thread(&GpuMiner::supervisedWorker, this, d, globalId).detach();
+        workers_.emplace_back(&GpuMiner::supervisedWorker, this, d, globalId);
     }
 }
 
@@ -248,11 +258,32 @@ void GpuMiner::supervisedWorker(int deviceIndex, int globalId)
     // definitivement hors service pour le reste de l'execution du
     // process. On le relance automatiquement apres un court delai,
     // plutot que d'abandonner ce GPU silencieusement.
-    while(true)
+    // Un arret demande (stop_) sort de la boucle sans relancer : worker()
+    // est deja sorti proprement de lui-meme sur stop_.
+    while(!stop_)
     {
         worker(deviceIndex, globalId);
 
+        if(stop_) break;  // sortie normale sur arret : pas de relance
+
         pushLogLine("GPU " + std::to_string(deviceIndex) + ": worker thread stopped unexpectedly, restarting in 5s...");
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        // Sleep fractionne pour reagir vite a un arret pendant l'attente.
+        for(int s = 0; s < 50 && !stop_; s++)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+}
+
+void GpuMiner::stop()
+{
+    stop_ = true;
+    for(auto& t : workers_)
+    {
+        if(t.joinable()) t.join();
+    }
+    workers_.clear();
+}
+
+GpuMiner::~GpuMiner()
+{
+    stop();
 }

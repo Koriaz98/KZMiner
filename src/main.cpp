@@ -92,15 +92,31 @@ static void resolveWalletAndWorker(
 
 namespace
 {
-    void restoreCursorAndExit(int)
+    volatile std::sig_atomic_t g_stopRequested = 0;
+
+    // Handler de signal STRICTEMENT async-signal-safe : il ne fait que
+    // poser un flag (ecriture d'un volatile sig_atomic_t, la seule
+    // operation garantie sure dans un handler). Tout le reste (curseur,
+    // arret des workers, cudaFree) se fait dans main(), en contexte
+    // normal. Faire du std::cout ici deadlockait sur le verrou de stdout
+    // tenu par un thread interrompu, figeant le process -> contextes CUDA
+    // jamais liberes -> kernels orphelins, GPU intuables, reboot force.
+    // 2e signal (l'utilisateur reappuie, croyant que ca ne repond pas) ->
+    // sortie dure immediate pour ne JAMAIS rester bloque (_exit est
+    // async-signal-safe, contrairement a exit()).
+    void requestStop(int)
     {
-        // Avant de quitter : repositionne le curseur tout en bas du
-        // terminal (pas juste le rendre visible) et efface le reste
-        // en dessous - sinon le curseur reste exactement ou l'a
-        // laisse le dernier rafraichissement differentiel du panneau
-        // (potentiellement au milieu de l'ecran), et le prochain
-        // prompt du shell s'imprime alors par-dessus le contenu deja
-        // affiche a cet endroit, melangeant les deux visuellement.
+        if(g_stopRequested) _exit(130);
+        g_stopRequested = 1;
+    }
+
+    // Repositionne le curseur tout en bas du terminal et le rend visible,
+    // pour que le prochain prompt du shell ne s'imprime pas par-dessus le
+    // panneau. Appele depuis main() en contexte NORMAL au moment de
+    // l'arret propre - JAMAIS depuis un handler (std::cout n'est pas
+    // async-signal-safe).
+    void restoreCursor()
+    {
         struct winsize ws{};
         int termRows = 24;
         if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0)
@@ -108,9 +124,6 @@ namespace
             termRows = ws.ws_row;
         }
         std::cout << "\033[" << termRows << ";1H" << "\033[?25h" << "\n" << std::flush;
-        std::signal(SIGINT, SIG_DFL);
-        std::signal(SIGTERM, SIG_DFL);
-        std::raise(SIGINT);
     }
 }
 
@@ -118,8 +131,8 @@ int main(int argc, char **argv)
 {
     setenv("CUDA_DEVICE_ORDER", "PCI_BUS_ID", 1);
     std::signal(SIGPIPE, SIG_IGN);
-    std::signal(SIGINT, restoreCursorAndExit);
-    std::signal(SIGTERM, restoreCursorAndExit);
+    std::signal(SIGINT, requestStop);
+    std::signal(SIGTERM, requestStop);
 
     MinerConfig config = ConfigParser::parse(argc, argv);
 
@@ -131,12 +144,16 @@ int main(int argc, char **argv)
 
     checkForUpdate();
 
-    for(int i = 5; i > 0; i--)
+    for(int i = 5; i > 0 && !g_stopRequested; i--)
     {
         std::cout << "\rStarting in " << i << "s... " << std::flush;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        // Sleep fractionne : un Ctrl+C pendant le compte a rebours doit
+        // sortir tout de suite, sans lancer inutilement les workers.
+        for(int s = 0; s < 10 && !g_stopRequested; s++)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     std::cout << "\r                              \r";
+    if(g_stopRequested) return 0;  // arret avant tout lancement de worker
 
     std::cout << "Algorithm: " << kRed << "Argon2id" << kReset << "\n";
     std::cout << "Mode: " << config.mode << "\n";
@@ -338,9 +355,16 @@ int main(int argc, char **argv)
     // afficher 0 H/s a tort malgre un vrai travail en cours.
     DashboardData lastDashboard;
 
-    while(true)
+    while(!g_stopRequested)
     {
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+        // Rafraichissement ~2s, mais fractionne pour reagir a un signal
+        // d'arret en <200ms (sinon l'utilisateur, croyant que ca ne
+        // repond pas, reappuie sur Ctrl+C).
+        for(int i = 0; i < 20 && !g_stopRequested; i++)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if(g_stopRequested) break;
 
         auto now = std::chrono::steady_clock::now();
 
@@ -509,5 +533,19 @@ int main(int argc, char **argv)
         lastDashboard = dashboard;
     }
 
+    // --- Arret propre (contexte normal, hors handler de signal) ---
+    // Ordre VERROUILLE : on JOINT tous les workers AVANT toute destruction
+    // de source. Les workers appellent source->getJob()/submitNonce() ; si
+    // source etait detruit alors qu'un worker tourne encore, ce serait un
+    // use-after-free (meme classe de bug qu'issue #1). stop() pose stop_
+    // puis join() : il ne rend la main qu'une fois TOUS les workers arretes.
+    restoreCursor();
+    if(gpuMiner) gpuMiner->stop();  // workers GPU stoppes ENTRE deux batches
+                                    // -> hashers detruits -> cudaFree propre
+                                    // (pas de kernel Argon2id en vol).
+    if(cpuMiner) cpuMiner->stop();
+    // Ici, plus aucun worker vivant. La destruction en fin de scope
+    // (gpuMiner/cpuMiner deja stoppes, puis source EN DERNIER car declare
+    // en premier) est donc sans course.
     return 0;
 }

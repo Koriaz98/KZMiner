@@ -38,7 +38,7 @@ void CPUMiner::worker(int cpuId)
     // des duplicate shares).
     NonceResumeCache resumeCache;
 
-    while(true)
+    while(!stop_)
     {
         MiningJob job = source_->getJob();
         if(!job.valid)
@@ -109,8 +109,24 @@ void CPUMiner::launchWorkers()
         << " / " << totalWorkers_;
     pushLogLine(oss.str());
 
+    // Threads conserves (pas .detach()) pour pouvoir les JOINDRE a l'arret.
     for(int i = 0; i < threads; i++)
     {
-        std::thread(&CPUMiner::worker, this, i).detach();
+        workers_.emplace_back(&CPUMiner::worker, this, i);
     }
+}
+
+void CPUMiner::stop()
+{
+    stop_ = true;
+    for(auto& t : workers_)
+    {
+        if(t.joinable()) t.join();
+    }
+    workers_.clear();
+}
+
+CPUMiner::~CPUMiner()
+{
+    stop();
 }
