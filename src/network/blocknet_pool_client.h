@@ -52,11 +52,16 @@ public:
     uint64_t getAcceptedCount() const { return acceptedCount_.load(); }
     uint64_t getRejectedCount() const { return rejectedCount_.load(); }
     bool hadSuccessfulSession() const { return sessionSucceeded_.load(); }
+    // true si le pool a EXPLICITEMENT rejete le login (reponse id=1 avec un
+    // statut != ok) durant cette session - distinct d'une simple coupure
+    // reseau. Consomme par la politique fatale generique (LoginFatalPolicy).
+    bool loginWasRejected() const { return loginRejected_.load(); }
 
 private:
     std::atomic<uint64_t> acceptedCount_{0};
     std::atomic<uint64_t> rejectedCount_{0};
     std::atomic<bool> sessionSucceeded_{false};
+    std::atomic<bool> loginRejected_{false};
 
     std::string host_;
     int port_;

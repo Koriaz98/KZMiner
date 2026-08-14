@@ -90,11 +90,14 @@ void BlocknetPoolJobManager::watchdogLoop()
         }
         if(!running_) break;
 
+        bool loginRejected = false;
         {
             // Lecture d'etat de l'ancien client via snapshot (le watchdog
             // pourrait sinon lire client_ pendant qu'il le remplace).
             auto old = snapshotClient();
-            if(old && old->hadSuccessfulSession())
+            bool succeeded = old && old->hadSuccessfulSession();
+            loginRejected  = old && old->loginWasRejected();
+            if(succeeded)
             {
                 consecutiveFailures_ = 0;
             }
@@ -102,11 +105,33 @@ void BlocknetPoolJobManager::watchdogLoop()
             {
                 if(consecutiveFailures_ < 10) consecutiveFailures_++;
             }
+
+            // Politique fatale generique : N rejets de login EXPLICITES
+            // consecutifs -> arret complet (voir login_fatal_policy.h). Ne
+            // s'applique qu'au rejet explicite ; une coupure reseau garde la
+            // reconnexion habituelle (issue #1) intacte. worker_ suffixe par
+            // "-devfee" pour la source dev (etiquette de log seulement).
+            static const std::string kDevSuffix = "-devfee";
+            bool isDev = worker_.size() >= kDevSuffix.size()
+                && worker_.compare(worker_.size() - kDevSuffix.size(), kDevSuffix.size(), kDevSuffix) == 0;
+            std::string label = std::string("[blocknet:") + (isDev ? "devfee" : "user") + "]";
+            if(loginPolicy_.onSessionEnded(succeeded, loginRejected, label))
+            {
+                // On cesse de reconnecter ; main lira hasFatalError() et
+                // declenchera l'arret propre de tout le mineur.
+                running_ = false;
+                break;
+            }
         }
 
-        int delay = reconnectDelaySeconds();
+        // Backoff court dedie apres un rejet de login (l'adresse ne se
+        // corrige pas toute seule), sinon le delai de reconnexion reseau.
+        int delay = loginPolicy_.backoffSeconds(reconnectDelaySeconds());
 
-        pushLogLine("[blocknet] connection lost, reconnecting in " + std::to_string(delay) + "s...");
+        if(!loginRejected)
+        {
+            pushLogLine("[blocknet] connection lost, reconnecting in " + std::to_string(delay) + "s...");
+        }
 
         std::this_thread::sleep_for(std::chrono::seconds(delay));
         if(!running_) break;

@@ -208,12 +208,14 @@ void BlocknetPoolClient::handleLine(const std::string& line)
         }
         else
         {
-            // On journalise le message brut recu, pas seulement
-            // "rejected" - on n'a pas encore de certitude sur le champ
-            // exact que le pool utilise pour expliquer un rejet
-            // (error, message, ou autre), donc autant montrer la
-            // reponse complete pour diagnostiquer avec de vraies
-            // preuves plutot que de deviner.
+            // Rejet de login EXPLICITE (reponse protocolaire, distinct d'une
+            // coupure reseau) : on pose le flag lu par la politique fatale
+            // generique via loginWasRejected(). On journalise le message brut
+            // recu, pas seulement "rejected" - on n'a pas encore de certitude
+            // sur le champ exact que le pool utilise pour expliquer un rejet
+            // (error, message, ou autre), donc autant montrer la reponse
+            // complete pour diagnostiquer avec de vraies preuves.
+            loginRejected_ = true;
             pushLogLine(sourceLabel() + " login rejected: " + line);
         }
         return;

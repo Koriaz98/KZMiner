@@ -56,4 +56,12 @@ public:
     virtual uint64_t getAcceptedCount() const { return 0; }
     virtual uint64_t getRejectedCount() const { return 0; }
     virtual uint64_t getSendFailedCount() const { return 0; }
+
+    // Erreur fatale non recuperable rendant la poursuite du minage inutile
+    // ou nuisible (ex. login user durablement rejete -> risque de miner en
+    // silence sur le seul wallet dev). L'orchestration (main.cpp) surveille
+    // hasFatalError() et declenche un arret propre complet. Par defaut a
+    // false : seules les sources concernees (pools a login) redefinissent.
+    virtual bool hasFatalError() const { return false; }
+    virtual std::string fatalError() const { return ""; }
 };

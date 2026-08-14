@@ -49,11 +49,16 @@ public:
     // reussie, qui ne garantit pas que le pool accepte reellement la
     // connexion sur la duree).
     bool hadSuccessfulSession() const { return sessionSucceeded_.load(); }
+    // true si le pool a EXPLICITEMENT rejete le login (reponse id=1 avec un
+    // statut != ok) - distinct d'une simple coupure reseau. Consomme par la
+    // politique fatale generique (LoginFatalPolicy), partagee avec Blocknet.
+    bool loginWasRejected() const { return loginRejected_.load(); }
 
 private:
     std::atomic<uint64_t> acceptedCount_{0};
     std::atomic<uint64_t> rejectedCount_{0};
     std::atomic<bool> sessionSucceeded_{false};
+    std::atomic<bool> loginRejected_{false};
     std::string host_;
     int port_;
     std::string wallet_;

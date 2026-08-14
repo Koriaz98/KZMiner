@@ -355,6 +355,11 @@ int main(int argc, char **argv)
     // afficher 0 H/s a tort malgre un vrai travail en cours.
     DashboardData lastDashboard;
 
+    // Passe a true si une source signale une erreur fatale (ex. login user
+    // rejete de maniere repetee) : declenche l'arret propre et un code de
+    // sortie non nul.
+    bool fatalExit = false;
+
     while(!g_stopRequested)
     {
         // Rafraichissement ~2s, mais fractionne pour reagir a un signal
@@ -365,6 +370,16 @@ int main(int argc, char **argv)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         if(g_stopRequested) break;
+
+        // Erreur fatale cote source (login user durablement rejete) : on
+        // sort de la boucle vers le meme arret propre que Ctrl+C, plutot que
+        // de continuer a miner en silence sur le wallet dev. La source a deja
+        // journalise le motif (voir LoginFatalPolicy).
+        if(source->hasFatalError())
+        {
+            fatalExit = true;
+            break;
+        }
 
         auto now = std::chrono::steady_clock::now();
 
@@ -544,8 +559,32 @@ int main(int argc, char **argv)
                                     // -> hashers detruits -> cudaFree propre
                                     // (pas de kernel Argon2id en vol).
     if(cpuMiner) cpuMiner->stop();
-    // Ici, plus aucun worker vivant. La destruction en fin de scope
-    // (gpuMiner/cpuMiner deja stoppes, puis source EN DERNIER car declare
-    // en premier) est donc sans course.
+    // Ici, plus aucun worker vivant.
+
+    if(fatalExit)
+    {
+        // Erreur de configuration (adresse -u invalide) : on NE quitte PAS.
+        // Le wrapper HiveOS fait `exec ./kzminer` (voir packaging/hiveos/
+        // kzminer/h-run.sh) : tout process qui sort est considere mort et
+        // RELANCE par l'agent, quel que soit le code de sortie. Quitter ici
+        // creerait donc une boucle crash-relance rejouant des logins rejetes
+        // toutes les ~15s -> risque de ban IP cote pool. On reste au
+        // contraire en vie a 0 H/s : minage arrete, GPU liberes, plus aucune
+        // reconnexion (le watchdog de la source s'est deja arrete), motif
+        // affiche, jusqu'a un signal d'arret explicite (Ctrl+C).
+        std::cout << "\n" << kRed << "ERREUR FATALE : " << source->fatalError()
+                  << kReset << "\n"
+                  << "Minage arrete (0 H/s), GPU liberes, aucune reconnexion. "
+                     "Corrigez l'adresse -u puis relancez KZMiner.\n"
+                  << "Ctrl+C pour quitter." << std::flush;
+        while(!g_stopRequested)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        restoreCursor();
+    }
+
+    // La destruction en fin de scope (gpuMiner/cpuMiner deja stoppes, puis
+    // source EN DERNIER car declare en premier) est sans course.
     return 0;
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include "mining_source.h"
 #include "blocknet_pool_client.h"
+#include "login_fatal_policy.h"
 #include <thread>
 #include <atomic>
 #include <string>
@@ -36,11 +37,21 @@ public:
     uint64_t getRejectedCount() const override;
     uint64_t getSendFailedCount() const override;
 
+    // Etat fatal expose a l'orchestration (main.cpp) : login user rejete de
+    // maniere repetee (voir LoginFatalPolicy). Sur true, main arrete tout le
+    // mineur proprement plutot que de miner en silence sur le wallet dev.
+    bool hasFatalError() const override { return loginPolicy_.isFatal(); }
+    std::string fatalError() const override { return loginPolicy_.reason(); }
+
 private:
     std::string host_;
     int port_;
     std::string wallet_;
     std::string worker_;
+
+    // Politique fatale generique (constantes + logique partagees avec le
+    // pool BTC09). Mutee UNIQUEMENT par le thread watchdog ; lue par main.
+    LoginFatalPolicy loginPolicy_;
 
     // client_ est remplace par le watchdog en cas de reconnexion, pendant
     // que des threads workers le lisent via getJob()/submitNonce(). shared_ptr

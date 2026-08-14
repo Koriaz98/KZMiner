@@ -1,6 +1,7 @@
 #pragma once
 #include "mining_source.h"
 #include "pool_client.h"
+#include "login_fatal_policy.h"
 #include <thread>
 #include <atomic>
 #include <string>
@@ -33,11 +34,21 @@ public:
     uint64_t getRejectedCount() const override;
     uint64_t getSendFailedCount() const override;
 
+    // Etat fatal expose a l'orchestration (main.cpp) : login user rejete de
+    // maniere repetee (voir LoginFatalPolicy, partagee avec Blocknet). Sur
+    // true, main arrete tout le mineur proprement.
+    bool hasFatalError() const override { return loginPolicy_.isFatal(); }
+    std::string fatalError() const override { return loginPolicy_.reason(); }
+
 private:
     std::string host_;
     int port_;
     std::string wallet_;
     std::string worker_;
+
+    // Politique fatale generique (memes constantes/logique que Blocknet).
+    // Mutee UNIQUEMENT par le thread watchdog ; lue par main.
+    LoginFatalPolicy loginPolicy_;
 
     // client_ est remplace par le watchdog en cas de reconnexion, pendant
     // que des threads workers le lisent via getJob()/submitNonce(). shared_ptr

@@ -149,18 +149,31 @@ void PoolClient::handleLine(const std::string& line)
     }
 
     if(msg.contains("id") && msg["id"].is_number() &&
-       msg["id"].get<long long>() == 1 && msg.contains("result"))
+       msg["id"].get<long long>() == 1)
     {
+        // Reponse au login (id=1). Auparavant, seul le cas "ok" etait
+        // traite : un rejet passait inapercu (pas de log, pas de flag), et
+        // le mineur retombait en silence sur la seule source dev. On detecte
+        // desormais le rejet EXPLICITE pour la politique fatale generique
+        // (loginWasRejected()), symetriquement a BlocknetPoolClient.
+        bool ok = false;
         try
         {
-            std::string status = msg["result"]["status"].get<std::string>();
-            if(status == "ok")
-            {
-                sessionSucceeded_ = true;
-                pushLogLine(sourceLabel() + " logged in");
-            }
+            ok = msg.contains("result") && msg["result"].is_object()
+                 && msg["result"].value("status", std::string()) == "ok";
         }
         catch(...) {}
+
+        if(ok)
+        {
+            sessionSucceeded_ = true;
+            pushLogLine(sourceLabel() + " logged in");
+        }
+        else
+        {
+            loginRejected_ = true;
+            pushLogLine(sourceLabel() + " login rejected: " + line);
+        }
         return;
     }
 
